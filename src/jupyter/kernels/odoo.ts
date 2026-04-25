@@ -61,25 +61,13 @@ RUN pip3 install --break-system-packages --ignore-installed \\
     jupyterlab ipykernel jupyter-server
 
 COPY odoo_kernel.py /opt/odoo_kernel.py
+COPY kernel.json /opt/kernel.json
 RUN python3 -m ipykernel install --name odoo --display-name "Odoo (env loaded)" \\
     --prefix=/usr/local
+# Remplace le kernel.py par le notre + force kernel.json a pointer dessus
 RUN cp /opt/odoo_kernel.py /usr/local/share/jupyter/kernels/odoo/kernel.py \\
-    && chmod +x /usr/local/share/jupyter/kernels/odoo/kernel.py
-
-# Reecrire kernel.json pour qu'il execute notre kernel.py custom
-# au lieu du ipykernel_launcher par defaut
-RUN cat > /usr/local/share/jupyter/kernels/odoo/kernel.json <<'JSON'
-{
-  "argv": [
-    "/usr/bin/python3",
-    "/usr/local/share/jupyter/kernels/odoo/kernel.py",
-    "-f",
-    "{connection_file}"
-  ],
-  "display_name": "Odoo (env loaded)",
-  "language": "python"
-}
-JSON
+    && chmod +x /usr/local/share/jupyter/kernels/odoo/kernel.py \\
+    && cp /opt/kernel.json /usr/local/share/jupyter/kernels/odoo/kernel.json
 
 USER odoo
 EXPOSE 8888
@@ -146,6 +134,22 @@ export function buildOdooImage(opts: OdooImageOptions): void {
   mkdirSync(dir, { recursive: true });
 
   writeFileSync(join(dir, 'odoo_kernel.py'), KERNEL_PY);
+
+  // kernel.json : pointe vers notre kernel.py custom au lieu du
+  // ipykernel_launcher par defaut. {connection_file} est un placeholder
+  // que Jupyter substitue au lancement du kernel.
+  const kernelJson = {
+    argv: [
+      '/usr/bin/python3',
+      '/usr/local/share/jupyter/kernels/odoo/kernel.py',
+      '-f',
+      '{connection_file}',
+    ],
+    display_name: 'Odoo (env loaded)',
+    language: 'python',
+  };
+  writeFileSync(join(dir, 'kernel.json'), JSON.stringify(kernelJson, null, 2));
+
   writeFileSync(
     join(dir, 'Dockerfile'),
     DOCKERFILE.replace(/FROM odoo:17/, `FROM odoo:${opts.odooVersion}`),
