@@ -54,7 +54,8 @@ const JUPYTER_CONFIG_PY = `# Jupyter server config — genere par Saasy agent
 c.ServerApp.allow_origin_pat = '^https://.*$'
 c.ServerApp.disable_check_xsrf = True
 # Cookies en SameSite=None pour fonctionner dans une iframe cross-origin (Saasy dashboard)
-c.ServerApp.cookie_options = {'SameSite': 'None', 'Secure': True}
+# Depuis Jupyter Server 2.0, cookie_options est sur IdentityProvider (pas ServerApp).
+c.IdentityProvider.cookie_options = {'SameSite': 'None', 'Secure': True}
 c.ServerApp.root_dir = '/home/jovyan/work'
 `;
 
