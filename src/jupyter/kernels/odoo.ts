@@ -237,7 +237,8 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     }
   } catch { /* ignore */ }
 
-  // 6. Run container
+  // 6. Run container — override CMD pour passer les flags CSP/allow_origin
+  // necessaires a l'embed dans l'iframe Saasy dashboard
   const cmd = [
     'docker run -d',
     `--name ${opts.containerName}`,
@@ -251,6 +252,12 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     `-e JUPYTER_TOKEN="${token}"`,
     `-e ALLOW_ORIGIN="${opts.allowOrigin}"`,
     imageName,
+    'jupyter', 'lab',
+    '--ip=0.0.0.0',
+    '--port=8888',
+    '--no-browser',
+    `--ServerApp.allow_origin="${opts.allowOrigin}"`,
+    `--ServerApp.tornado_settings='{"headers":{"Content-Security-Policy":"frame-ancestors ${opts.allowOrigin}"}}'`,
   ].join(' ');
 
   execSync(cmd, { stdio: ['ignore', 'pipe', 'pipe'] });
