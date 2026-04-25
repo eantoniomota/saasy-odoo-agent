@@ -282,6 +282,9 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     // allow_origin_pat: regex permissive (auth par token reste obligatoire)
     // necessaire pour les WebSockets quand iframe est sur un domaine != parent
     `--ServerApp.allow_origin_pat=^https://.*$`,
+    // disable_check_xsrf: necessaire pour les iframes cross-origin
+    // ou les cookies tiers sont bloques par le browser. Auth par token suffit.
+    '--ServerApp.disable_check_xsrf=true',
     `--ServerApp.tornado_settings='{"headers":{"Content-Security-Policy":"frame-ancestors ${opts.allowOrigin}"}}'`,
   ].join(' ');
 
