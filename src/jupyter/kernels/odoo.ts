@@ -50,6 +50,16 @@ if __name__ == '__main__':
     IPKernelApp.launch_instance(kernel_class=OdooKernel)
 `;
 
+const JUPYTER_CONFIG_PY = `# Jupyter server config — genere par Saasy agent
+c.ServerApp.allow_origin_pat = '^https://.*$'
+c.ServerApp.disable_check_xsrf = True
+# Cookies en SameSite=None pour fonctionner dans une iframe cross-origin (Saasy dashboard)
+c.ServerApp.cookie_options = {'SameSite': 'None', 'Secure': True}
+c.ServerApp.root_dir = '/home/jovyan/work'
+`;
+
+const DARK_THEME_SETTINGS = JSON.stringify({ theme: 'JupyterLab Dark' });
+
 const DOCKERFILE = `FROM odoo:17
 
 USER root
@@ -62,12 +72,20 @@ RUN pip3 install --break-system-packages --ignore-installed \\
 
 COPY odoo_kernel.py /opt/odoo_kernel.py
 COPY kernel.json /opt/kernel.json
+COPY jupyter_server_config.py /etc/jupyter/jupyter_server_config.py
+COPY themes.jupyterlab-settings /tmp/themes.jupyterlab-settings
+
 RUN python3 -m ipykernel install --name odoo --display-name "Odoo (env loaded)" \\
     --prefix=/usr/local
 # Remplace le kernel.py par le notre + force kernel.json a pointer dessus
 RUN cp /opt/odoo_kernel.py /usr/local/share/jupyter/kernels/odoo/kernel.py \\
     && chmod +x /usr/local/share/jupyter/kernels/odoo/kernel.py \\
     && cp /opt/kernel.json /usr/local/share/jupyter/kernels/odoo/kernel.json
+
+# Dark theme par defaut pour JupyterLab
+RUN mkdir -p /var/lib/odoo/.jupyter/lab/user-settings/@jupyterlab/apputils-extension \\
+    && cp /tmp/themes.jupyterlab-settings /var/lib/odoo/.jupyter/lab/user-settings/@jupyterlab/apputils-extension/themes.jupyterlab-settings \\
+    && chown -R odoo:odoo /var/lib/odoo/.jupyter
 
 USER odoo
 EXPOSE 8888
@@ -149,6 +167,9 @@ export function buildOdooImage(opts: OdooImageOptions): void {
     language: 'python',
   };
   writeFileSync(join(dir, 'kernel.json'), JSON.stringify(kernelJson, null, 2));
+
+  writeFileSync(join(dir, 'jupyter_server_config.py'), JUPYTER_CONFIG_PY);
+  writeFileSync(join(dir, 'themes.jupyterlab-settings'), DARK_THEME_SETTINGS);
 
   writeFileSync(
     join(dir, 'Dockerfile'),
@@ -278,13 +299,9 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     '--ip=0.0.0.0',
     '--port=8888',
     '--no-browser',
-    '--ServerApp.root_dir=/home/jovyan/work',
-    // allow_origin_pat: regex permissive (auth par token reste obligatoire)
-    // necessaire pour les WebSockets quand iframe est sur un domaine != parent
-    `--ServerApp.allow_origin_pat=^https://.*$`,
-    // disable_check_xsrf: necessaire pour les iframes cross-origin
-    // ou les cookies tiers sont bloques par le browser. Auth par token suffit.
-    '--ServerApp.disable_check_xsrf=true',
+    // allow_origin_pat, cookie_options, disable_check_xsrf, root_dir :
+    // sont definis dans /etc/jupyter/jupyter_server_config.py (image)
+    // Ici on garde uniquement le CSP frame-ancestors qui est dynamique
     `--ServerApp.tornado_settings='{"headers":{"Content-Security-Policy":"frame-ancestors ${opts.allowOrigin}"}}'`,
   ].join(' ');
 
