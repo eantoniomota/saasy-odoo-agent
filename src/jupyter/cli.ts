@@ -12,7 +12,7 @@
  */
 import { execSync } from 'child_process';
 import * as jupyter from './index';
-import { buildOdooImage } from './kernels/odoo';
+import { installOdoo } from './kernels/odoo';
 
 interface ParsedArgs {
   envId?: string;
@@ -75,15 +75,19 @@ const COMMANDS: Record<string, (args: ParsedArgs) => Promise<void>> = {
   async 'install-odoo'(args) {
     const envId = requireArg(args.envId, '--env-id');
     const odooVersion = requireArg(args.odooVersion, '--odoo-version');
-    const imageName = `saasy-odoo-jupyter:${odooVersion}`;
-    console.log(`[Jupyter] Build image Odoo+Jupyter (${imageName})...`);
-    buildOdooImage({ imageName, odooVersion });
-    console.log('[Jupyter] Image construite. Lancement du container...');
-    // Note: install() utilise jupyter/datascience-notebook par défaut.
-    // Pour Odoo, il faudrait surcharger l'image. Stub : simple confirmation.
-    console.log(`[Jupyter] Pour utiliser cette image, lance manuellement :`);
-    console.log(`  docker run -d --name ${containerName(envId)} -p 127.0.0.1:8888:8888 \\`);
-    console.log(`    -e ODOO_DB=${args.dbName || 'odoo'} -e JUPYTER_TOKEN=<token> ${imageName}`);
+    const port = args.port || 8888;
+    const allowOrigin = process.env.SAASY_API_URL?.replace(/\/$/, '').replace(/^https?:\/\/api\./, 'https://app.') || 'https://app.saasy.fr';
+    const result = await installOdoo({
+      environmentId: envId,
+      containerName: containerName(envId),
+      port,
+      notebookDir: args.notebookDir || `/home/jupyter/notebooks-${envId.slice(-8)}`,
+      odooVersion,
+      dbName: args.dbName || 'odoo',
+      allowOrigin,
+    });
+    console.log(`[Jupyter] Installé. Token: ${result.token.slice(0, 8)}... Version: ${result.version}`);
+    console.log(`[Jupyter] Acces local : http://127.0.0.1:${port}/?token=${result.token}`);
   },
 
   async start(args) {

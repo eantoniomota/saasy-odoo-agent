@@ -137,3 +137,140 @@ export function buildOdooImage(opts: OdooImageOptions): void {
 
   execSync(`docker build -t ${opts.imageName} ${dir}`, { stdio: 'inherit' });
 }
+
+import { randomBytes } from 'crypto';
+import { existsSync } from 'fs';
+import { renderNotebook } from '../templates';
+import { sendJupyterStatus } from '../../transport/api';
+
+export interface InstallOdooOptions {
+  environmentId: string;
+  containerName: string;
+  port: number;
+  notebookDir: string;
+  odooVersion: string;
+  dbName: string;
+  allowOrigin: string;
+  odooContainerName?: string; // par defaut "odoo"
+  network?: string;            // auto-detecte si non fourni
+  odooConfPath?: string;       // auto-detecte si non fourni
+}
+
+function dockerExec(cmd: string): string {
+  return execSync(cmd, { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+}
+
+function detectOdooNetwork(odooContainerName: string): string {
+  try {
+    const out = dockerExec(
+      `docker inspect ${odooContainerName} --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}{{"\\n"}}{{end}}'`,
+    );
+    const networks = out.split('\n').filter(Boolean);
+    if (networks.length === 0) {
+      throw new Error(`Aucun network detecte sur ${odooContainerName}`);
+    }
+    return networks[0];
+  } catch (err) {
+    throw new Error(
+      `Impossible de detecter le network du container "${odooContainerName}". ` +
+      `Verifie qu'il tourne, ou passe --network manuellement. (${(err as Error).message})`,
+    );
+  }
+}
+
+function detectOdooConfPath(odooContainerName: string): string {
+  try {
+    const out = dockerExec(
+      `docker inspect ${odooContainerName} --format '{{range .Mounts}}{{if eq .Destination "/etc/odoo/odoo.conf"}}{{.Source}}{{end}}{{end}}'`,
+    );
+    if (!out) {
+      throw new Error(`Aucun mount /etc/odoo/odoo.conf trouve sur ${odooContainerName}`);
+    }
+    return out;
+  } catch (err) {
+    throw new Error(
+      `Impossible de detecter le chemin de odoo.conf depuis "${odooContainerName}". ` +
+      `Verifie le mount, ou passe --odoo-conf manuellement. (${(err as Error).message})`,
+    );
+  }
+}
+
+/**
+ * Install complet Jupyter+Odoo : build l'image, detecte le network/odoo.conf,
+ * genere le token et lance le container. Equivalent de jupyter.install pour Odoo.
+ */
+export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: string; version: string }> {
+  await sendJupyterStatus({ environmentId: opts.environmentId, status: 'installing' });
+
+  const imageName = `saasy-odoo-jupyter:${opts.odooVersion}`;
+  const odooContainer = opts.odooContainerName || 'odoo';
+
+  // 1. Build l'image
+  console.log(`[Jupyter] Build image ${imageName}...`);
+  buildOdooImage({ imageName, odooVersion: opts.odooVersion });
+
+  // 2. Auto-detect network + odoo.conf
+  const network = opts.network || detectOdooNetwork(odooContainer);
+  const odooConfPath = opts.odooConfPath || detectOdooConfPath(odooContainer);
+  console.log(`[Jupyter] Network: ${network}`);
+  console.log(`[Jupyter] odoo.conf: ${odooConfPath}`);
+
+  // 3. Genere le token
+  const token = randomBytes(32).toString('hex');
+
+  // 4. Pre-install templates
+  try {
+    if (!existsSync(opts.notebookDir)) mkdirSync(opts.notebookDir, { recursive: true });
+    for (const tpl of ODOO_TEMPLATES) {
+      const path = join(opts.notebookDir, tpl.filename);
+      if (!existsSync(path)) writeFileSync(path, renderNotebook(tpl));
+    }
+  } catch (err) {
+    console.warn('[Jupyter] Templates non installes:', (err as Error).message);
+  }
+
+  // 5. Remove old container if any
+  try {
+    const exists = dockerExec(`docker ps -a --filter name=^${opts.containerName}$ --format "{{.Names}}"`);
+    if (exists === opts.containerName) {
+      execSync(`docker rm -f ${opts.containerName}`, { stdio: 'ignore' });
+    }
+  } catch { /* ignore */ }
+
+  // 6. Run container
+  const cmd = [
+    'docker run -d',
+    `--name ${opts.containerName}`,
+    '--restart unless-stopped',
+    `--network ${network}`,
+    `-p 127.0.0.1:${opts.port}:8888`,
+    `-v ${opts.notebookDir}:/home/jovyan/work`,
+    `-v ${odooConfPath}:/etc/odoo/odoo.conf:ro`,
+    `-e ODOO_DB=${opts.dbName}`,
+    `-e ODOO_RC=/etc/odoo/odoo.conf`,
+    `-e JUPYTER_TOKEN="${token}"`,
+    `-e ALLOW_ORIGIN="${opts.allowOrigin}"`,
+    imageName,
+  ].join(' ');
+
+  execSync(cmd, { stdio: ['ignore', 'pipe', 'pipe'] });
+
+  // 7. Wait for boot
+  await new Promise((r) => setTimeout(r, 3000));
+
+  // 8. Get version
+  let version = 'unknown';
+  try {
+    version = dockerExec(`docker exec ${opts.containerName} jupyter --version | head -1`);
+  } catch { /* ignore */ }
+
+  await sendJupyterStatus({
+    environmentId: opts.environmentId,
+    status: 'running',
+    version,
+    kernels: ['python3', 'odoo'],
+    adminToken: token,
+  });
+
+  return { token, version };
+}
