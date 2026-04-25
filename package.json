@@ -1,0 +1,33 @@
+{
+  "name": "@saasy/agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Saasy Infrastructure Monitoring Agent - Collects server metrics, Docker stats and logs",
+  "main": "dist/index.js",
+  "bin": {
+    "saasy-agent": "dist/cli.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/<votre-org>/saasy-agent.git"
+  },
+  "homepage": "https://saasy.fr",
+  "license": "UNLICENSED",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "cli": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "jest"
+  },
+  "dependencies": {
+    "dockerode": "^4.0.4"
+  },
+  "devDependencies": {
+    "@types/dockerode": "^3.3.34",
+    "@types/node": "^20.11.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.3"
+  }
+}
