@@ -48,7 +48,7 @@ function containerName(envId: string): string {
   return `saasy-jupyter-${envId.slice(-12)}`;
 }
 
-function require(value: string | undefined, name: string): string {
+function requireArg(value: string | undefined, name: string): string {
   if (!value) {
     console.error(`[FATAL] Argument requis manquant : ${name}`);
     process.exit(1);
@@ -58,7 +58,7 @@ function require(value: string | undefined, name: string): string {
 
 const COMMANDS: Record<string, (args: ParsedArgs) => Promise<void>> = {
   async install(args) {
-    const envId = require(args.envId, '--env-id');
+    const envId = requireArg(args.envId, '--env-id');
     const port = args.port || 8888;
     const allowOrigin = process.env.SAASY_API_URL?.replace(/\/$/, '').replace(/^https?:\/\/api\./, 'https://app.') || 'https://app.saasy.fr';
     const result = await jupyter.install({
@@ -73,8 +73,8 @@ const COMMANDS: Record<string, (args: ParsedArgs) => Promise<void>> = {
   },
 
   async 'install-odoo'(args) {
-    const envId = require(args.envId, '--env-id');
-    const odooVersion = require(args.odooVersion, '--odoo-version');
+    const envId = requireArg(args.envId, '--env-id');
+    const odooVersion = requireArg(args.odooVersion, '--odoo-version');
     const imageName = `saasy-odoo-jupyter:${odooVersion}`;
     console.log(`[Jupyter] Build image Odoo+Jupyter (${imageName})...`);
     buildOdooImage({ imageName, odooVersion });
@@ -87,32 +87,32 @@ const COMMANDS: Record<string, (args: ParsedArgs) => Promise<void>> = {
   },
 
   async start(args) {
-    const envId = require(args.envId, '--env-id');
+    const envId = requireArg(args.envId, '--env-id');
     await jupyter.start({ environmentId: envId, containerName: containerName(envId) });
     console.log('[Jupyter] Démarré');
   },
 
   async stop(args) {
-    const envId = require(args.envId, '--env-id');
+    const envId = requireArg(args.envId, '--env-id');
     await jupyter.stop({ environmentId: envId, containerName: containerName(envId) });
     console.log('[Jupyter] Arrêté');
   },
 
   async status(args) {
-    const envId = require(args.envId, '--env-id');
+    const envId = requireArg(args.envId, '--env-id');
     const status = jupyter.getStatus(containerName(envId));
     console.log(`[Jupyter] Statut: ${status}`);
     await jupyter.reportStatus({ environmentId: envId, containerName: containerName(envId) });
   },
 
   async 'rotate-token'(args) {
-    const envId = require(args.envId, '--env-id');
+    const envId = requireArg(args.envId, '--env-id');
     const token = await jupyter.rotateToken({ environmentId: envId, containerName: containerName(envId) });
     console.log(`[Jupyter] Token régénéré: ${token.slice(0, 8)}...`);
   },
 
   async logs(args) {
-    const envId = require(args.envId, '--env-id');
+    const envId = requireArg(args.envId, '--env-id');
     const tail = args.tail || 100;
     const out = execSync(`docker logs --tail ${tail} ${containerName(envId)}`, { encoding: 'utf-8' });
     console.log(out);
