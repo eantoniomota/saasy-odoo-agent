@@ -63,7 +63,23 @@ RUN pip3 install --break-system-packages --ignore-installed \\
 COPY odoo_kernel.py /opt/odoo_kernel.py
 RUN python3 -m ipykernel install --name odoo --display-name "Odoo (env loaded)" \\
     --prefix=/usr/local
-RUN cp /opt/odoo_kernel.py /usr/local/share/jupyter/kernels/odoo/kernel.py
+RUN cp /opt/odoo_kernel.py /usr/local/share/jupyter/kernels/odoo/kernel.py \\
+    && chmod +x /usr/local/share/jupyter/kernels/odoo/kernel.py
+
+# Reecrire kernel.json pour qu'il execute notre kernel.py custom
+# au lieu du ipykernel_launcher par defaut
+RUN cat > /usr/local/share/jupyter/kernels/odoo/kernel.json <<'JSON'
+{
+  "argv": [
+    "/usr/bin/python3",
+    "/usr/local/share/jupyter/kernels/odoo/kernel.py",
+    "-f",
+    "{connection_file}"
+  ],
+  "display_name": "Odoo (env loaded)",
+  "language": "python"
+}
+JSON
 
 USER odoo
 EXPOSE 8888
