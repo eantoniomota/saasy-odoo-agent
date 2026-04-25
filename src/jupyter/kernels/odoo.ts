@@ -275,7 +275,9 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     '--port=8888',
     '--no-browser',
     '--ServerApp.root_dir=/home/jovyan/work',
-    `--ServerApp.allow_origin="${opts.allowOrigin}"`,
+    // allow_origin_pat: regex permissive (auth par token reste obligatoire)
+    // necessaire pour les WebSockets quand iframe est sur un domaine != parent
+    `--ServerApp.allow_origin_pat=^https://.*$`,
     `--ServerApp.tornado_settings='{"headers":{"Content-Security-Policy":"frame-ancestors ${opts.allowOrigin}"}}'`,
   ].join(' ');
 
