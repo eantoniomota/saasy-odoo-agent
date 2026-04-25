@@ -15,7 +15,9 @@ FROM node:20-alpine
 WORKDIR /app
 
 # su-exec : drop des privileges proprement apres l'init du groupe docker
-RUN apk add --no-cache su-exec
+# docker-cli : permet a l'agent d'utiliser `docker` pour piloter les containers
+#   Jupyter via le socket monte (commandes `saasy-agent jupyter ...`)
+RUN apk add --no-cache su-exec docker-cli
 
 # User non-root ; le groupe sera ajuste dynamiquement par l'entrypoint
 RUN addgroup -S saasy && adduser -S agent -G saasy
