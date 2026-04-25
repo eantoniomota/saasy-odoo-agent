@@ -238,7 +238,8 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
   } catch { /* ignore */ }
 
   // 6. Run container — override CMD pour passer les flags CSP/allow_origin
-  // necessaires a l'embed dans l'iframe Saasy dashboard
+  // necessaires a l'embed dans l'iframe Saasy dashboard.
+  // --workdir et --ServerApp.root_dir : Jupyter demarre dans le bon dossier.
   const cmd = [
     'docker run -d',
     `--name ${opts.containerName}`,
@@ -247,6 +248,7 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     `-p 127.0.0.1:${opts.port}:8888`,
     `-v ${opts.notebookDir}:/home/jovyan/work`,
     `-v ${odooConfPath}:/etc/odoo/odoo.conf:ro`,
+    '--workdir /home/jovyan/work',
     `-e ODOO_DB=${opts.dbName}`,
     `-e ODOO_RC=/etc/odoo/odoo.conf`,
     `-e JUPYTER_TOKEN="${token}"`,
@@ -256,13 +258,26 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     '--ip=0.0.0.0',
     '--port=8888',
     '--no-browser',
+    '--ServerApp.root_dir=/home/jovyan/work',
     `--ServerApp.allow_origin="${opts.allowOrigin}"`,
     `--ServerApp.tornado_settings='{"headers":{"Content-Security-Policy":"frame-ancestors ${opts.allowOrigin}"}}'`,
   ].join(' ');
 
   execSync(cmd, { stdio: ['ignore', 'pipe', 'pipe'] });
 
-  // 7. Wait for boot
+  // 7. Fix permissions du dossier de travail :
+  // l'image odoo:18 tourne en user 'odoo', mais le mount cote hote est cree
+  // par Docker en root. Sans chown, "Permission denied" a la creation de notebooks.
+  try {
+    execSync(
+      `docker exec --user root ${opts.containerName} chown -R odoo:odoo /home/jovyan/work`,
+      { stdio: 'ignore' },
+    );
+  } catch (err) {
+    console.warn('[Jupyter] chown post-launch echoue (non critique):', (err as Error).message);
+  }
+
+  // 8. Wait for boot
   await new Promise((r) => setTimeout(r, 3000));
 
   // 8. Get version
