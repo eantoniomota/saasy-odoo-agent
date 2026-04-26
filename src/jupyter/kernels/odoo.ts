@@ -6,8 +6,8 @@
  * with an env-loaded kernel (equivalent to `odoo-bin shell`).
  */
 import { execSync } from 'child_process';
-import { writeFileSync, mkdirSync } from 'fs';
-import { join } from 'path';
+import { writeFileSync, mkdirSync, cpSync, existsSync as existsSyncFs } from 'fs';
+import { join, resolve } from 'path';
 import { tmpdir } from 'os';
 
 const KERNEL_PY = `"""
@@ -65,8 +65,13 @@ const DOCKERFILE = `FROM odoo:17
 
 USER root
 
-RUN apt-get update && apt-get install -y python3-pip python3-venv \\
+# docker.io pour permettre a l'extension Odoo Admin (depuis Jupyter)
+# d'executer docker exec/restart sur le container Odoo via /var/run/docker.sock
+RUN apt-get update && apt-get install -y python3-pip python3-venv docker.io \\
     && rm -rf /var/lib/apt/lists/*
+
+# Permettre au user 'odoo' d'utiliser le socket Docker (membre du groupe docker)
+RUN usermod -aG docker odoo
 
 RUN pip3 install --break-system-packages --ignore-installed \\
     jupyterlab ipykernel jupyter-server
@@ -75,6 +80,17 @@ COPY odoo_kernel.py /opt/odoo_kernel.py
 COPY kernel.json /opt/kernel.json
 COPY jupyter_server_config.py /etc/jupyter/jupyter_server_config.py
 COPY themes.jupyterlab-settings /tmp/themes.jupyterlab-settings
+
+# Extension Odoo Admin : server-side (handlers HTTP) + frontend (menu top-bar).
+# Le frontend est build pendant pip install via hatch-jupyter-builder
+# (necessite Node.js, installe temporairement puis retire).
+COPY jupyter-extension /tmp/jupyter-extension
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \\
+    && apt-get install -y nodejs \\
+    && pip3 install --break-system-packages --ignore-installed /tmp/jupyter-extension \\
+    && apt-get remove -y nodejs \\
+    && apt-get autoremove -y \\
+    && rm -rf /var/lib/apt/lists/* /tmp/jupyter-extension
 
 RUN python3 -m ipykernel install --name odoo --display-name "Odoo (env loaded)" \\
     --prefix=/usr/local
@@ -172,6 +188,17 @@ export function buildOdooImage(opts: OdooImageOptions): void {
   writeFileSync(join(dir, 'jupyter_server_config.py'), JUPYTER_CONFIG_PY);
   writeFileSync(join(dir, 'themes.jupyterlab-settings'), DARK_THEME_SETTINGS);
 
+  // Copie l'extension JupyterLab "saasy_jupyter_odoo" dans la build context.
+  // Le Dockerfile fait ensuite pip install /tmp/jupyter-extension
+  // __dirname = .../dist/jupyter/kernels (compile JS) ou src/jupyter/kernels (TS dev)
+  // jupyter-extension est a la racine du package : 3 niveaux au-dessus
+  const extensionSource = resolve(__dirname, '../../../jupyter-extension');
+  if (existsSyncFs(extensionSource)) {
+    cpSync(extensionSource, join(dir, 'jupyter-extension'), { recursive: true });
+  } else {
+    console.warn(`[Jupyter] Extension Odoo Admin introuvable a ${extensionSource} — le menu "Odoo" ne sera pas disponible.`);
+  }
+
   writeFileSync(
     join(dir, 'Dockerfile'),
     DOCKERFILE.replace(/FROM odoo:17/, `FROM odoo:${opts.odooVersion}`),
@@ -238,6 +265,23 @@ function detectOdooConfPath(odooContainerName: string): string {
 }
 
 /**
+ * Detecte le path hote du dossier addons monte sur /mnt/extra-addons
+ * dans le container Odoo. Retourne null si non trouve (l'admin module
+ * sera quand meme fonctionnel mais sans support du file browser pour
+ * les addons).
+ */
+function detectOdooAddonsPath(odooContainerName: string): string | null {
+  try {
+    const out = dockerExec(
+      `docker inspect ${odooContainerName} --format '{{range .Mounts}}{{if eq .Destination "/mnt/extra-addons"}}{{.Source}}{{end}}{{end}}'`,
+    );
+    return out || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Install complet Jupyter+Odoo : build l'image, detecte le network/odoo.conf,
  * genere le token et lance le container. Equivalent de jupyter.install pour Odoo.
  */
@@ -251,11 +295,13 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
   console.log(`[Jupyter] Build image ${imageName}...`);
   buildOdooImage({ imageName, odooVersion: opts.odooVersion });
 
-  // 2. Auto-detect network + odoo.conf
+  // 2. Auto-detect network + odoo.conf + addons path
   const network = opts.network || detectOdooNetwork(odooContainer);
   const odooConfPath = opts.odooConfPath || detectOdooConfPath(odooContainer);
+  const addonsPath = detectOdooAddonsPath(odooContainer);
   console.log(`[Jupyter] Network: ${network}`);
   console.log(`[Jupyter] odoo.conf: ${odooConfPath}`);
+  console.log(`[Jupyter] Addons: ${addonsPath || '(non detecte — file browser sans addons)'}`);
 
   // 3. Genere le token
   const token = randomBytes(32).toString('hex');
@@ -282,6 +328,10 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
   // 6. Run container — override CMD pour passer les flags CSP/allow_origin
   // necessaires a l'embed dans l'iframe Saasy dashboard.
   // --workdir et --ServerApp.root_dir : Jupyter demarre dans le bon dossier.
+  // Mount Docker socket : permet au menu "Odoo" de l'extension JupyterLab
+  // d'executer docker exec/restart sur le container Odoo.
+  // Mount addons (si detecte) : permet de browser et editer les modules
+  // Odoo directement depuis JupyterLab.
   const cmd = [
     'docker run -d',
     `--name ${opts.containerName}`,
@@ -290,9 +340,12 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     `-p 127.0.0.1:${opts.port}:8888`,
     `-v ${opts.notebookDir}:/home/jovyan/work`,
     `-v ${odooConfPath}:/etc/odoo/odoo.conf:ro`,
+    '-v /var/run/docker.sock:/var/run/docker.sock',
+    addonsPath ? `-v ${addonsPath}:/mnt/extra-addons` : '',
     '--workdir /home/jovyan/work',
     `-e ODOO_DB=${opts.dbName}`,
     `-e ODOO_RC=/etc/odoo/odoo.conf`,
+    `-e ODOO_CONTAINER=${odooContainer}`,
     `-e JUPYTER_TOKEN="${token}"`,
     `-e ALLOW_ORIGIN="${opts.allowOrigin}"`,
     imageName,
@@ -304,7 +357,7 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     // sont definis dans /etc/jupyter/jupyter_server_config.py (image)
     // Ici on garde uniquement le CSP frame-ancestors qui est dynamique
     `--ServerApp.tornado_settings='{"headers":{"Content-Security-Policy":"frame-ancestors ${opts.allowOrigin}"}}'`,
-  ].join(' ');
+  ].filter(Boolean).join(' ');
 
   execSync(cmd, { stdio: ['ignore', 'pipe', 'pipe'] });
 

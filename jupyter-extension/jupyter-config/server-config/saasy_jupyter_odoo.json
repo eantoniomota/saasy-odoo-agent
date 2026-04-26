@@ -1,0 +1,7 @@
+{
+  "ServerApp": {
+    "jpserver_extensions": {
+      "saasy_jupyter_odoo": true
+    }
+  }
+}

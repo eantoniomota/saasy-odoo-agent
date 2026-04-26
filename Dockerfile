@@ -27,6 +27,11 @@ RUN npm install --omit=dev && npm cache clean --force
 
 COPY --from=builder /app/dist/ dist/
 
+# Extension Odoo Admin pour JupyterLab (Python package + frontend pre-built).
+# Embarque dans l'image agent : la CLI install-odoo la copie dans le build
+# context de l'image saasy-odoo-jupyter au moment de l'install.
+COPY jupyter-extension/ jupyter-extension/
+
 # Entrypoint qui detecte le GID du socket Docker monte et l'attribue a 'agent'
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
