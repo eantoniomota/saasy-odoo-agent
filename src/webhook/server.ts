@@ -13,6 +13,7 @@
 import http from 'node:http';
 import { config } from '../config';
 import { backupOdoo } from '../backup/odoo';
+import type { BackupRecord } from '../backup/api-client';
 
 interface WebhookBody {
   appId?: string;
@@ -78,11 +79,11 @@ async function handleTriggerBackup(req: http.IncomingMessage, res: http.ServerRe
     odooContainer: config.webhookOdooContainer,
     name,
   })
-    .then((result) => {
+    .then((result: BackupRecord) => {
       console.log(`[Webhook] Backup termine : id=${result.id}, status=${result.status}`);
     })
-    .catch((err) => {
-      console.error('[Webhook] Backup echoue :', (err as Error).message);
+    .catch((err: Error) => {
+      console.error('[Webhook] Backup echoue :', err.message);
     });
 }
 
