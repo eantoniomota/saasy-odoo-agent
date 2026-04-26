@@ -4,6 +4,7 @@ import { collectSystemMetrics } from './collectors/system';
 import { collectContainerStats, startLogStreaming, flushLogBuffer, getRunningContainerNames, stopLogStreaming } from './collectors/docker';
 import { sendMetrics, sendLogs, sendHeartbeat } from './transport/api';
 import * as jupyter from './jupyter';
+import { startWebhookServer } from './webhook/server';
 
 console.log('┌──────────────────────────────────────────┐');
 console.log('│         Saasy Infrastructure Agent        │');
@@ -19,6 +20,10 @@ console.log(`  Docker      : ${config.dockerSocket}`);
 if (config.logContainers.length > 0) {
   console.log(`  Containers  : ${config.logContainers.join(', ')}`);
 }
+
+// Webhook server pour declencher des backups via Saasy dashboard (optionnel)
+startWebhookServer();
+
 console.log('');
 
 // ── Metrics collection loop ─────────────────────────────────────────────────

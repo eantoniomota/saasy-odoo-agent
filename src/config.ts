@@ -44,4 +44,12 @@ export const config = Object.freeze({
   // Agent
   hostname: process.env.AGENT_HOSTNAME || os.hostname(),
   version: '1.0.0',
+
+  // Webhook server (optionnel, pour declenchement de backup a distance via Saasy dashboard)
+  // Active uniquement si WEBHOOK_SECRET est defini.
+  // Le port est bind sur 127.0.0.1 — l'access se fait via Nginx (proxy HTTPS).
+  webhookSecret: process.env.WEBHOOK_SECRET || '',
+  webhookEnvId: process.env.WEBHOOK_ENV_ID || '',
+  webhookPort: parseInt(process.env.WEBHOOK_PORT || '9090', 10),
+  webhookOdooContainer: process.env.WEBHOOK_ODOO_CONTAINER || 'odoo',
 });
