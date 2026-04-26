@@ -14,11 +14,21 @@ import http from 'node:http';
 import { config } from '../config';
 import { backupOdoo } from '../backup/odoo';
 import type { BackupRecord } from '../backup/api-client';
+import { deployOdoo, type DeployResult } from '../deploy/odoo';
 
 interface WebhookBody {
   appId?: string;
   action?: string;
   name?: string;
+  timestamp?: string;
+}
+
+interface DeployBody {
+  action?: 'deploy' | string;
+  environment?: { id?: string; slug?: string; name?: string; branch?: string };
+  branch?: string;
+  sha?: string;
+  message?: string;
   timestamp?: string;
 }
 
@@ -87,20 +97,111 @@ async function handleTriggerBackup(req: http.IncomingMessage, res: http.ServerRe
     });
 }
 
+/**
+ * POST /trigger-deploy
+ *
+ * Recoit le webhook de Saasy quand l'utilisateur clique "Deployer ce commit"
+ * (ou quand un push GitHub matche la branche de l'env). Body envoye par
+ * Saasy (cf. GitHubDeploymentService.triggerDeployment) :
+ *
+ *   {
+ *     "action": "deploy",
+ *     "environment": {"id":"...","name":"production","slug":"production","branch":"main"},
+ *     "branch": "main",
+ *     "sha": "abcdef0...",
+ *     "message": "feat: ...",
+ *     "timestamp": "2026-..."
+ *   }
+ *
+ * Auth : si DEPLOY_SECRET defini cote agent, requiert soit :
+ *   - header X-Deploy-Secret: <secret>
+ *   - query param ?secret=<secret>
+ */
+async function handleTriggerDeploy(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  if (config.deploySecret) {
+    const headerSecret = req.headers['x-deploy-secret'];
+    let querySecret: string | null = null;
+    try {
+      const u = new URL(req.url || '', 'http://localhost');
+      querySecret = u.searchParams.get('secret');
+    } catch { /* ignore parsing error */ }
+    const provided = headerSecret || querySecret;
+    if (provided !== config.deploySecret) {
+      send(res, 403, { error: 'Forbidden' });
+      return;
+    }
+  }
+
+  let body: DeployBody = {};
+  try {
+    body = (await readBody(req)) as DeployBody;
+  } catch (err) {
+    send(res, 400, { error: (err as Error).message });
+    return;
+  }
+
+  const envSlug = body.environment?.slug;
+  const branch = body.branch || body.environment?.branch || 'main';
+  const sha = body.sha;
+  const message = body.message;
+
+  if (!envSlug) {
+    send(res, 400, { error: 'environment.slug required' });
+    return;
+  }
+
+  // Repond 202 immediatement, le deploy tourne en arriere-plan
+  send(res, 202, {
+    ok: true,
+    message: 'Deploy started',
+    envSlug,
+    branch,
+    sha: sha?.slice(0, 7),
+  });
+
+  console.log(`[Webhook] Deploy declenche par Saasy : env=${envSlug}, branch=${branch}, sha=${sha?.slice(0, 7) || '?'}`);
+
+  deployOdoo({ envSlug, branch, sha, message })
+    .then((result: DeployResult) => {
+      console.log(
+        `[Webhook] Deploy termine : ${result.oldSha.slice(0, 7)} → ${result.newSha.slice(0, 7)}, ` +
+        `${result.filesChanged} files, module updated=${result.moduleUpdated}, skipped=${result.skipped}`,
+      );
+    })
+    .catch((err: Error) => {
+      console.error('[Webhook] Deploy echoue :', err.message);
+    });
+}
+
 export function startWebhookServer(): http.Server | null {
-  if (!config.webhookSecret) {
+  // Le server demarre si AU MOINS un des secrets est configure
+  if (!config.webhookSecret && !config.deploySecret) {
     return null;
   }
 
   const server = http.createServer((req, res) => {
-    if (req.method === 'POST' && req.url === '/trigger-backup') {
+    // Routes (avec gestion query string pour /trigger-deploy?secret=...)
+    const path = (req.url || '').split('?')[0];
+
+    if (req.method === 'POST' && path === '/trigger-backup') {
+      if (!config.webhookSecret) {
+        send(res, 404, { error: 'Backup webhook desactive (WEBHOOK_SECRET non configure)' });
+        return;
+      }
       handleTriggerBackup(req, res).catch((err) => {
-        console.error('[Webhook] Erreur handler :', err);
+        console.error('[Webhook] Erreur handler backup :', err);
         send(res, 500, { error: 'Internal error' });
       });
       return;
     }
-    if (req.method === 'GET' && req.url === '/health') {
+    if (req.method === 'POST' && path === '/trigger-deploy') {
+      handleTriggerDeploy(req, res).catch((err) => {
+        console.error('[Webhook] Erreur handler deploy :', err);
+        send(res, 500, { error: 'Internal error' });
+      });
+      return;
+    }
+    if (req.method === 'GET' && path === '/health') {
       send(res, 200, { ok: true });
       return;
     }
@@ -112,7 +213,10 @@ export function startWebhookServer(): http.Server | null {
   // Bind sur 127.0.0.1 dans le container ne marche pas avec docker -p :
   // le port mapping route via 0.0.0.0 du container, pas son loopback interne.
   server.listen(config.webhookPort, '0.0.0.0', () => {
-    console.log(`  Webhook    : http://0.0.0.0:${config.webhookPort}/trigger-backup (env=${config.webhookEnvId || '(non configure)'})`);
+    const enabled: string[] = [];
+    if (config.webhookSecret) enabled.push(`/trigger-backup (env=${config.webhookEnvId || '?'})`);
+    if (config.deploySecret) enabled.push(`/trigger-deploy`);
+    console.log(`  Webhook    : http://0.0.0.0:${config.webhookPort} → ${enabled.join(', ') || '(aucun)'}`);
   });
 
   server.on('error', (err) => {

@@ -52,4 +52,16 @@ export const config = Object.freeze({
   webhookEnvId: process.env.WEBHOOK_ENV_ID || '',
   webhookPort: parseInt(process.env.WEBHOOK_PORT || '9090', 10),
   webhookOdooContainer: process.env.WEBHOOK_ODOO_CONTAINER || 'odoo',
+
+  // Deploy (declenchement Saasy → agent → git pull + odoo update + restart)
+  // DEPLOY_BASE_PATH/<env-slug>/<repo-name>/ doit pointer vers le clone du repo.
+  // Convention par defaut :
+  //   /host/deployments/production/saasy-odoo-addon
+  //   /host/deployments/staging/saasy-odoo-addon
+  deployBasePath: process.env.DEPLOY_BASE_PATH || '/host/deployments',
+  deployRepoName: process.env.DEPLOY_REPO_NAME || 'saasy-odoo-addon',
+  deployModule: process.env.DEPLOY_MODULE || 'saasy',
+  // Optionnel : secret pour authentifier le webhook deploy. Saasy doit le passer
+  // soit via header X-Deploy-Secret soit via query param ?secret=.
+  deploySecret: process.env.DEPLOY_SECRET || '',
 });
