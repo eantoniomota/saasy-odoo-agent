@@ -165,8 +165,10 @@ function tarFilestore(cfg: ResolvedConfig, outFile: string): void {
 
   if (!exists) {
     console.warn(`[Backup] Filestore ${cfg.filestorePath}/${cfg.dbName} absent — archive vide.`);
-    // Tar vide pour preserver la structure attendue
-    execSync(`tar cf ${outFile} -T /dev/null`);
+    // Tar vide valide = 10240 bytes de zeros (deux blocs EOF tar standard).
+    // GNU tar refuse de creer une archive vide via "tar cf ... -T /dev/null"
+    // ("Cowardly refusing to create an empty archive"), donc on l'ecrit directement.
+    writeFileSync(outFile, Buffer.alloc(10240));
     return;
   }
 
