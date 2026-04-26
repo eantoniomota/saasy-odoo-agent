@@ -69,8 +69,8 @@ const plugin: JupyterFrontEndPlugin<void> = {
     }
 
     // ── Update Module ──────────────────────────────────────────────────────
-    // Auto-detecte le module depuis le fichier actif. Si trouve, update direct.
-    // Sinon, demande le nom au user.
+    // Auto-detecte le module depuis le fichier actif. Si trouve, update direct
+    // dans une fenetre live (streaming de l'output `docker exec odoo odoo -u`).
     commands.addCommand(CommandIDs.updateModule, {
       label: 'Update Module',
       caption: 'Update the Odoo module of the currently open file',
@@ -95,28 +95,12 @@ const plugin: JupyterFrontEndPlugin<void> = {
           }
         }
 
-        const notif = Notification.emit(`Updating module ${module}…`, 'in-progress', {
-          autoClose: false
-        });
-        try {
-          const resp = await requestAPI<IUpdateResponse>(
-            `update?module=${encodeURIComponent(module)}`,
-            { method: 'POST' }
-          );
-          Notification.dismiss(notif);
-          if (resp.ok) {
-            Notification.success(`Module ${module} updated successfully`);
-          } else {
-            await showDialog({
-              title: `Update of ${module} failed`,
-              body: (resp.stderr || resp.stdout || 'Unknown error').slice(-2000),
-              buttons: [Dialog.okButton()]
-            });
-          }
-        } catch (err) {
-          Notification.dismiss(notif);
-          Notification.error(`Update failed: ${(err as Error).message}`);
-        }
+        // Ouvre une fenetre live avec le streaming de l'update
+        openStreamingLogs(
+          `Odoo — Updating ${module}`,
+          `update/stream?module=${encodeURIComponent(module)}`
+        );
+        Notification.info(`Update of ${module} started — see live logs`);
       }
     });
 
@@ -150,7 +134,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
     commands.addCommand(CommandIDs.liveLogs, {
       label: 'Live Logs (stream)…',
       caption: 'Open a shell-like window streaming Odoo logs in real-time',
-      execute: () => openStreamingLogs('Odoo — Live Logs')
+      execute: () => openStreamingLogs('Odoo — Live Logs', 'logs/stream?tail=50')
     });
 
     // ── Restart ────────────────────────────────────────────────────────────
@@ -169,7 +153,7 @@ const plugin: JupyterFrontEndPlugin<void> = {
         if (!result.button.accept) return;
 
         // Ouvre la fenetre shell AVANT le restart pour voir le boot
-        openStreamingLogs('Odoo — Restarting…');
+        openStreamingLogs('Odoo — Restarting…', 'logs/stream?tail=50');
 
         // Lance le restart en parallele
         try {
@@ -187,10 +171,14 @@ const plugin: JupyterFrontEndPlugin<void> = {
       }
     });
 
-    // ── Helper : ouvre un widget de streaming logs en MainArea ─────────────
-    function openStreamingLogs(title: string): void {
-      const widget = new StreamingLogsWidget();
-      widget.id = `saasy-odoo-logs-${Date.now()}`;
+    // ── Helper : ouvre un widget de streaming en MainArea ──────────────────
+    // endpoint : path apres /saasy-odoo/ (ex: "logs/stream?tail=50",
+    //            "update/stream?module=saasy")
+    function openStreamingLogs(title: string, endpoint: string): void {
+      const settings = ServerConnection.makeSettings();
+      const streamUrl = URLExt.join(settings.baseUrl, 'saasy-odoo', endpoint);
+      const widget = new StreamingLogsWidget(streamUrl, title);
+      widget.id = `saasy-odoo-stream-${Date.now()}`;
       widget.title.label = title;
       widget.title.closable = true;
       app.shell.add(widget, 'main');
@@ -238,12 +226,15 @@ class ModulePromptWidget extends Widget {
 }
 
 // ── Streaming logs widget (terminal-like view) ───────────────────────────
+// Generique : prend une URL SSE et stream son output dans un <pre>.
 class StreamingLogsWidget extends Widget {
   private _source: EventSource | null = null;
   private _pre: HTMLPreElement;
+  private _streamUrl: string;
 
-  constructor() {
+  constructor(streamUrl: string, headerLabel: string) {
     super();
+    this._streamUrl = streamUrl;
     this.addClass('saasy-odoo-streaming-logs');
     this.node.style.background = '#0d1117';
     this.node.style.padding = '8px';
@@ -254,7 +245,7 @@ class StreamingLogsWidget extends Widget {
     this.node.style.flexDirection = 'column';
 
     const header = document.createElement('div');
-    header.textContent = '$ docker logs -f odoo  (Ctrl+Q to disconnect)';
+    header.textContent = `$ ${headerLabel}  (close tab to disconnect)`;
     header.style.color = '#7ee787';
     header.style.fontFamily = 'monospace';
     header.style.fontSize = '11px';
@@ -281,9 +272,7 @@ class StreamingLogsWidget extends Widget {
   }
 
   private startStream(): void {
-    const settings = ServerConnection.makeSettings();
-    const url = URLExt.join(settings.baseUrl, 'saasy-odoo', 'logs', 'stream');
-    this._source = new EventSource(`${url}?tail=50`, { withCredentials: true });
+    this._source = new EventSource(this._streamUrl, { withCredentials: true });
 
     this._source.onmessage = (e: MessageEvent) => {
       try {
@@ -295,7 +284,7 @@ class StreamingLogsWidget extends Widget {
     };
 
     this._source.onerror = () => {
-      this.appendLine('\n[stream interrupted — reconnect by re-opening the window]\n');
+      this.appendLine('\n[stream closed]\n');
       this._source?.close();
       this._source = null;
     };

@@ -142,6 +142,72 @@ class RestartHandler(APIHandler):
         self.finish(json.dumps(result))
 
 
+class UpdateModuleStreamHandler(APIHandler):
+    """SSE: GET /saasy-odoo/update/stream?module=<name>
+
+    Stream l'output de `docker exec odoo odoo -u <module>` en temps reel.
+    Le client voit l'update se faire dans le terminal-widget JupyterLab
+    (chargement des modules, migrations SQL, etc.).
+    """
+
+    @tornado.web.authenticated
+    async def get(self):
+        module = self.get_argument("module", "")
+        if not module:
+            self.set_status(400)
+            self.finish(json.dumps({"error": "module argument is required"}))
+            return
+
+        # Securite : valide format alphanumerique + _ -
+        if not module.replace("_", "").replace("-", "").isalnum():
+            self.set_status(400)
+            self.finish(json.dumps({"error": "invalid module name"}))
+            return
+
+        self.set_header("Content-Type", "text/event-stream")
+        self.set_header("Cache-Control", "no-cache")
+        self.set_header("X-Accel-Buffering", "no")
+        self.set_header("Connection", "keep-alive")
+
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "exec", ODOO_CONTAINER, "odoo",
+            "-c", ODOO_RC, "-d", ODOO_DB, "-u", module,
+            "--stop-after-init", "--no-http",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        try:
+            self.write(f'data: {json.dumps({"line": f"[Update] {module} started...\\n\\n"})}\n\n')
+            await self.flush()
+
+            while True:
+                line_bytes = await proc.stdout.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", errors="replace")
+                self.write(f"data: {json.dumps({'line': line})}\n\n")
+                await self.flush()
+
+            await proc.wait()
+            status = "OK" if proc.returncode == 0 else f"FAILED (exit {proc.returncode})"
+            self.write(
+                f'data: {json.dumps({"line": f"\\n[Update] {module} {status}\\n"})}\n\n'
+            )
+            await self.flush()
+        except (StreamClosedError, ConnectionResetError):
+            pass
+        finally:
+            try:
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=2)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                try:
+                    proc.kill()
+                except ProcessLookupError:
+                    pass
+
+
 class LogsStreamHandler(APIHandler):
     """SSE: GET /saasy-odoo/logs/stream?tail=50
 
@@ -213,6 +279,7 @@ def setup_handlers(web_app):
     base_url = web_app.settings["base_url"]
     handlers = [
         (url_path_join(base_url, "saasy-odoo", "update"), UpdateModuleHandler),
+        (url_path_join(base_url, "saasy-odoo", "update", "stream"), UpdateModuleStreamHandler),
         (url_path_join(base_url, "saasy-odoo", "logs"), ServerLogsHandler),
         (url_path_join(base_url, "saasy-odoo", "logs", "stream"), LogsStreamHandler),
         (url_path_join(base_url, "saasy-odoo", "restart"), RestartHandler),
