@@ -2,13 +2,13 @@
  * CLI for Jupyter management on the Saasy agent.
  *
  * Usage:
- *   saasy-agent jupyter install --env-id <id> --port 8888 --domain notebook.x.com [--kernels python3,node,bash]
- *   saasy-agent jupyter install-odoo --env-id <id> --odoo-version 17 [--db-name odoo]
- *   saasy-agent jupyter start --env-id <id>
- *   saasy-agent jupyter stop --env-id <id>
- *   saasy-agent jupyter status --env-id <id>
- *   saasy-agent jupyter rotate-token --env-id <id>
- *   saasy-agent jupyter logs --env-id <id> [--tail 100]
+ *   saasy-odoo-agent jupyter install --env-id <id> --port 8888 --domain notebook.x.com [--kernels python3,node,bash]
+ *   saasy-odoo-agent jupyter install-odoo --env-id <id> --odoo-version 17 [--db-name odoo]
+ *   saasy-odoo-agent jupyter start --env-id <id>
+ *   saasy-odoo-agent jupyter stop --env-id <id>
+ *   saasy-odoo-agent jupyter status --env-id <id>
+ *   saasy-odoo-agent jupyter rotate-token --env-id <id>
+ *   saasy-odoo-agent jupyter logs --env-id <id> [--tail 100]
  */
 import { execSync } from 'child_process';
 import * as jupyter from './index';
@@ -126,7 +126,7 @@ const COMMANDS: Record<string, (args: ParsedArgs) => Promise<void>> = {
 export async function runCli(argv: string[]): Promise<void> {
   const cmd = argv[0];
   if (!cmd || !COMMANDS[cmd]) {
-    console.error('Usage: saasy-agent jupyter <command> [options]');
+    console.error('Usage: saasy-odoo-agent jupyter <command> [options]');
     console.error('Commands: ' + Object.keys(COMMANDS).join(', '));
     process.exit(1);
   }

@@ -1,15 +1,15 @@
 {
-  "name": "@saasy/agent",
+  "name": "@saasy/odoo-agent",
   "version": "1.0.0",
   "private": true,
-  "description": "Saasy Infrastructure Monitoring Agent - Collects server metrics, Docker stats and logs",
+  "description": "Saasy Odoo Agent — monitoring, backup, deployment et JupyterLab pour Odoo sur serveur dedie",
   "main": "dist/index.js",
   "bin": {
-    "saasy-agent": "dist/cli.js"
+    "saasy-odoo-agent": "dist/cli.js"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<votre-org>/saasy-agent.git"
+    "url": "git+https://github.com/eantoniomota/saasy-odoo-agent.git"
   },
   "homepage": "https://saasy.fr",
   "license": "UNLICENSED",

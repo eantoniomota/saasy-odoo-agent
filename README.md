@@ -1,4 +1,4 @@
-# Saasy Agent
+# Saasy Odoo Agent
 
 Agent de monitoring d'infrastructure pour la plateforme [Saasy](https://saasy.fr).
 
@@ -18,7 +18,7 @@ Collecte les métriques système, les stats Docker et les logs depuis un serveur
 
 ```bash
 docker run -d \
-  --name saasy-agent \
+  --name saasy-odoo-agent \
   --restart unless-stopped \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -e SAASY_API_URL=https://api.saasy.fr \
@@ -30,18 +30,18 @@ docker run -d \
 ### Option 2 — npm
 
 ```bash
-npm install -g @saasy/agent
+npm install -g @saasy/odoo-agent
 SAASY_API_URL=https://api.saasy.fr \
 SAASY_AGENT_KEY=fbk_xxx \
 SAASY_SERVER_ID=xxx \
-saasy-agent
+saasy-odoo-agent
 ```
 
 ### Option 3 — depuis les sources
 
 ```bash
-git clone https://github.com/<votre-org>/saasy-agent.git
-cd saasy-agent
+git clone https://github.com/<votre-org>/saasy-odoo-agent.git
+cd saasy-odoo-agent
 npm install
 cp .env.example .env  # remplir les variables
 npm run build

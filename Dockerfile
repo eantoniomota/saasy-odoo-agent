@@ -16,7 +16,7 @@ WORKDIR /app
 
 # su-exec : drop des privileges proprement apres l'init du groupe docker
 # docker-cli : permet a l'agent d'utiliser `docker` pour piloter les containers
-#   Jupyter via le socket monte (commandes `saasy-agent jupyter ...`)
+#   Jupyter via le socket monte (commandes `saasy-odoo-agent jupyter ...`)
 RUN apk add --no-cache su-exec docker-cli
 
 # User non-root ; le groupe sera ajuste dynamiquement par l'entrypoint

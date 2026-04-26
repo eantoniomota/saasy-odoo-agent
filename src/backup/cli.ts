@@ -2,7 +2,7 @@
  * CLI pour le module backup de l'agent Saasy.
  *
  * Usage :
- *   saasy-agent backup odoo --env-id <id>
+ *   saasy-odoo-agent backup odoo --env-id <id>
  *     [--odoo-container odoo]
  *     [--db-container <name>]
  *     [--db-name odoo]
@@ -67,7 +67,7 @@ const COMMANDS: Record<string, (args: ParsedArgs) => Promise<void>> = {
 export async function runCli(argv: string[]): Promise<void> {
   const cmd = argv[0];
   if (!cmd || !COMMANDS[cmd]) {
-    console.error('Usage: saasy-agent backup <command> [options]');
+    console.error('Usage: saasy-odoo-agent backup <command> [options]');
     console.error('Commands: ' + Object.keys(COMMANDS).join(', '));
     process.exit(1);
   }

@@ -1,21 +1,23 @@
 /**
- * Saasy Agent CLI entry point.
+ * Saasy Odoo Agent CLI entry point.
  *
  * Usage: node dist/cli.js <module> <command> [options]
- *   saasy-agent jupyter install --env-id xxx
- *   saasy-agent jupyter start --env-id xxx
- *   saasy-agent ...
+ *   saasy-odoo-agent jupyter install --env-id xxx
+ *   saasy-odoo-agent jupyter start --env-id xxx
+ *   saasy-odoo-agent ...
  */
 import { runCli as runJupyterCli } from './jupyter/cli';
+import { runCli as runBackupCli } from './backup/cli';
 
 const MODULES: Record<string, (argv: string[]) => Promise<void>> = {
   jupyter: runJupyterCli,
+  backup: runBackupCli,
 };
 
 async function main() {
   const [, , module, ...rest] = process.argv;
   if (!module || !MODULES[module]) {
-    console.error('Usage: saasy-agent <module> <command> [options]');
+    console.error('Usage: saasy-odoo-agent <module> <command> [options]');
     console.error('Modules: ' + Object.keys(MODULES).join(', '));
     process.exit(1);
   }
