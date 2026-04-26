@@ -62,7 +62,10 @@ export function repoExists(repoPath: string): boolean {
  * Clone un repo GitHub. Si token fourni, l'inclut dans l'URL pour
  * l'authentification (utile pour les repos privés client).
  *
- * Le token n'est jamais loggé : on log uniquement la version sanitized.
+ * SECURITE : on capture stdout/stderr de git clone (pas stdio:'inherit')
+ * pour pouvoir filtrer le token avant de logger. Sinon git ecrit l'URL
+ * complete avec le token dans les messages d'erreur, qui se retrouvent
+ * dans `docker logs` puis dans les rapports utilisateurs.
  */
 export function clone(repoUrl: string, repoPath: string, token?: string): void {
   const sanitized = repoUrl.replace(/\/\/[^@]+@/, '//');
@@ -72,8 +75,29 @@ export function clone(repoUrl: string, repoPath: string, token?: string): void {
     ? repoUrl.replace(/^https:\/\//, `https://x-access-token:${token}@`)
     : repoUrl;
 
-  execSync(`mkdir -p $(dirname ${repoPath})`, { stdio: 'ignore' });
-  execSync(`git clone ${urlWithToken} ${repoPath}`, { stdio: 'inherit' });
+  execSync(`mkdir -p "$(dirname ${repoPath})"`, { stdio: 'ignore' });
+
+  try {
+    const out = execSync(`git clone ${urlWithToken} ${repoPath}`, {
+      encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    if (out) console.log(redactToken(out, token));
+  } catch (err) {
+    // err.stdout / err.stderr / err.message contiennent potentiellement le token
+    const e = err as { stdout?: Buffer | string; stderr?: Buffer | string; message?: string };
+    const stdout = redactToken(e.stdout?.toString() || '', token);
+    const stderr = redactToken(e.stderr?.toString() || '', token);
+    const message = redactToken(e.message || '', token);
+    if (stdout) console.log(stdout);
+    if (stderr) console.error(stderr);
+    throw new Error(`git clone failed: ${stderr.trim() || message}`);
+  }
+}
+
+function redactToken(text: string, token?: string): string {
+  if (!token || !text) return text;
+  return text.split(token).join('<TOKEN>');
 }
 
 /** Convertit "owner/repo" en URL HTTPS GitHub. */
