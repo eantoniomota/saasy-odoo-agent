@@ -165,7 +165,7 @@ async function handleTriggerDeploy(req: http.IncomingMessage, res: http.ServerRe
     .then((result: DeployResult) => {
       console.log(
         `[Webhook] Deploy termine : ${result.oldSha.slice(0, 7)} → ${result.newSha.slice(0, 7)}, ` +
-        `${result.filesChanged} files, module updated=${result.moduleUpdated}, skipped=${result.skipped}`,
+        `${result.filesChanged} files changed, skipped=${result.skipped}`,
       );
     })
     .catch((err: Error) => {

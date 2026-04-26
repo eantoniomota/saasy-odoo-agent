@@ -1,15 +1,18 @@
 /**
- * Deploy Odoo (V1) :
- *   - git fetch + checkout + pull sur le repo addon clone localement
- *   - Smart update detection : si fichiers .xml/data/views/security/i18n/manifest
- *     ont change → odoo -u <module>, sinon docker restart seulement
- *   - Override via commit message :
- *     [odoo:update]   → force odoo -u
- *     [odoo:skip]     → skip le deploy entierement
+ * Deploy Odoo (V1) — flow type Odoo.sh sans auto-update :
+ *   - Auto-clone le repo client si premier deploy
+ *   - git fetch + reset --hard + checkout du SHA cible
+ *   - docker restart <odooContainer> (reload du code Python)
+ *
+ * **L'update des modules (odoo -u <name>) est MANUEL** : c'est a l'utilisateur
+ * de declencher l'update depuis le menu Odoo Admin de JupyterLab apres un
+ * deploy qui a modifie des fichiers XML/data/views/etc.
+ *
+ * Override via commit message :
+ *   [odoo:skip] → skip le deploy entierement (utile pour commits doc)
  *
  * Conventions :
- *   - repoPath = <DEPLOY_BASE_PATH>/<envSlug>/<DEPLOY_REPO_NAME>
- *     Ex: /host/deployments/production/saasy-odoo-addon
+ *   - repoPath = <DEPLOY_BASE_PATH>/<envSlug>/<repo-name>
  *   - odooContainer = "odoo" pour production, "odoo-<envSlug>" sinon
  *   - dbName = "odoo" pour production, "odoo_<envSlug>" sinon
  */
@@ -32,7 +35,6 @@ export interface DeployResult {
   oldSha: string;
   newSha: string;
   filesChanged: number;
-  moduleUpdated: boolean;
   skipped: boolean;
   durationMs: number;
 }
@@ -44,7 +46,6 @@ interface ResolvedDeployConfig {
   repoToken: string;
   odooContainer: string;
   dbName: string;
-  module: string;
 }
 
 function resolveDeployConfig(envSlug: string): ResolvedDeployConfig {
@@ -52,12 +53,6 @@ function resolveDeployConfig(envSlug: string): ResolvedDeployConfig {
     throw new Error(
       'DEPLOY_GITHUB_REPO non configure cote agent. ' +
       'Format attendu : "owner/repo" (ex: "acme/odoo-stack").',
-    );
-  }
-  if (!config.deployModule) {
-    throw new Error(
-      'DEPLOY_MODULE non configure cote agent. ' +
-      'C\'est le nom technique du module Odoo a update (ex: "acme_app").',
     );
   }
 
@@ -71,19 +66,7 @@ function resolveDeployConfig(envSlug: string): ResolvedDeployConfig {
     repoToken: config.deployGithubToken,
     odooContainer: isProd ? 'odoo' : `odoo-${envSlug}`,
     dbName: isProd ? 'odoo' : `odoo_${envSlug}`,
-    module: config.deployModule,
   };
-}
-
-/** Determine si un fichier modifie necessite un odoo -u <module>. */
-function needsModuleUpdate(filePath: string): boolean {
-  // __manifest__.py n'importe ou
-  if (filePath.endsWith('__manifest__.py')) return true;
-  // Extensions de donnees Odoo
-  if (/\.(xml|csv|po|pot)$/.test(filePath)) return true;
-  // Dossiers de donnees / vues / acces / traductions
-  if (/(^|\/)(data|views|security|i18n|wizards|reports)\//.test(filePath)) return true;
-  return false;
 }
 
 function runDockerExec(cmd: string): void {
@@ -99,8 +82,6 @@ export async function deployOdoo(opts: DeployOdooOptions): Promise<DeployResult>
   console.log(`[Deploy] ─── env=${opts.envSlug} branch=${opts.branch} sha=${(opts.sha || '?').slice(0, 7)} ───`);
   console.log(`[Deploy] repoPath       : ${cfg.repoPath}`);
   console.log(`[Deploy] odooContainer  : ${cfg.odooContainer}`);
-  console.log(`[Deploy] dbName         : ${cfg.dbName}`);
-  console.log(`[Deploy] module         : ${cfg.module}`);
   if (opts.message) console.log(`[Deploy] message        : ${opts.message.split('\n')[0]}`);
 
   // Auto-clone si le repo n'existe pas (premier deploy)
@@ -119,7 +100,6 @@ export async function deployOdoo(opts: DeployOdooOptions): Promise<DeployResult>
       oldSha: git.getCurrentSha(cfg.repoPath),
       newSha: git.getCurrentSha(cfg.repoPath),
       filesChanged: 0,
-      moduleUpdated: false,
       skipped: true,
       durationMs: Date.now() - start,
     };
@@ -143,36 +123,16 @@ export async function deployOdoo(opts: DeployOdooOptions): Promise<DeployResult>
   const newSha = git.getCurrentSha(cfg.repoPath);
   console.log(`[Deploy] HEAD nouveau: ${newSha.slice(0, 7)}`);
 
-  // 2. Smart update detection
+  // 2. Liste les fichiers changes pour info (pas d'action automatique dessus)
   const changes = git.diffNames(cfg.repoPath, oldSha, newSha);
   console.log(`[Deploy] ${changes.length} fichier(s) change(s) :`);
   changes.slice(0, 20).forEach((f) => console.log(`         ${f}`));
   if (changes.length > 20) console.log(`         ... et ${changes.length - 20} autres`);
 
-  let moduleUpdated = changes.some(needsModuleUpdate);
-
-  // Override via commit message
-  if (opts.message?.includes('[odoo:update]')) {
-    console.log('[Deploy] [odoo:update] detecte — force odoo -u');
-    moduleUpdated = true;
-  }
-
-  if (oldSha === newSha && !moduleUpdated) {
-    console.log('[Deploy] Aucun changement — restart de courtoisie');
-  }
-
-  // 3. Apply
-  if (moduleUpdated) {
-    console.log(`[Deploy] Update module ${cfg.module} (peut prendre 30-60s)...`);
-    runDockerExec(
-      `docker exec ${cfg.odooContainer} odoo -c /etc/odoo/odoo.conf ` +
-      `-d ${cfg.dbName} -u ${cfg.module} --stop-after-init --no-http`,
-    );
-  } else {
-    console.log('[Deploy] Code Python pur — restart suffit');
-  }
-
-  // Restart toujours pour reload le code
+  // 3. Restart Odoo pour reload le code Python.
+  // L'update des modules (odoo -u) reste MANUEL — a faire depuis le menu
+  // Odoo Admin de JupyterLab si des fichiers XML/data ont change.
+  console.log('[Deploy] Restart Odoo pour reload du code...');
   runDockerExec(`docker restart ${cfg.odooContainer}`);
 
   const durationMs = Date.now() - start;
@@ -185,7 +145,6 @@ export async function deployOdoo(opts: DeployOdooOptions): Promise<DeployResult>
     oldSha,
     newSha,
     filesChanged: changes.length,
-    moduleUpdated,
     skipped: false,
     durationMs,
   };

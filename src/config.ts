@@ -66,9 +66,6 @@ export const config = Object.freeze({
   deployBasePath: process.env.DEPLOY_BASE_PATH || '/host/deployments',
   deployGithubRepo: process.env.DEPLOY_GITHUB_REPO || '',  // owner/repo
   deployGithubToken: process.env.DEPLOY_GITHUB_TOKEN || '', // PAT pour repos prives
-  // Module Odoo a updater (un repo client peut contenir plusieurs modules,
-  // mais on update typiquement le module principal).
-  deployModule: process.env.DEPLOY_MODULE || '',
   // Secret pour authentifier le webhook deploy. Saasy l'envoie dans
   // le header X-Deploy-Secret (auto-genere par env cote Saasy).
   deploySecret: process.env.DEPLOY_SECRET || '',
