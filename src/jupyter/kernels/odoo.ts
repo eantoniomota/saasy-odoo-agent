@@ -376,10 +376,10 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
   // 8. Wait for boot
   await new Promise((r) => setTimeout(r, 3000));
 
-  // 8. Get version
+  // 8. Get version (jupyter lab --version retourne juste le numero, ex: "4.0.5")
   let version = 'unknown';
   try {
-    version = dockerExec(`docker exec ${opts.containerName} jupyter --version | head -1`);
+    version = dockerExec(`docker exec ${opts.containerName} jupyter lab --version`);
   } catch { /* ignore */ }
 
   await sendJupyterStatus({
