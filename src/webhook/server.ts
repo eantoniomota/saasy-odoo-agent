@@ -107,9 +107,12 @@ export function startWebhookServer(): http.Server | null {
     send(res, 404, { error: 'Not Found' });
   });
 
-  // Bind sur 127.0.0.1 uniquement — l'acces externe passe par Nginx
-  server.listen(config.webhookPort, '127.0.0.1', () => {
-    console.log(`  Webhook    : http://127.0.0.1:${config.webhookPort}/trigger-backup (env=${config.webhookEnvId || '(non configure)'})`);
+  // Bind sur 0.0.0.0 cote container — l'isolation est garantie par
+  // le -p 127.0.0.1:9090:9090 cote docker run (seul loopback hote y accede).
+  // Bind sur 127.0.0.1 dans le container ne marche pas avec docker -p :
+  // le port mapping route via 0.0.0.0 du container, pas son loopback interne.
+  server.listen(config.webhookPort, '0.0.0.0', () => {
+    console.log(`  Webhook    : http://0.0.0.0:${config.webhookPort}/trigger-backup (env=${config.webhookEnvId || '(non configure)'})`);
   });
 
   server.on('error', (err) => {
