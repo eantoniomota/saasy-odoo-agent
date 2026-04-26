@@ -1,4 +1,5 @@
 """Tornado handlers for Odoo admin operations exposed to JupyterLab."""
+import asyncio
 import json
 import os
 import subprocess
@@ -7,6 +8,7 @@ from typing import Optional
 from jupyter_server.base.handlers import APIHandler
 from jupyter_server.utils import url_path_join
 import tornado
+from tornado.iostream import StreamClosedError
 
 
 ODOO_CONTAINER = os.environ.get("ODOO_CONTAINER", "odoo")
@@ -40,18 +42,24 @@ def _detect_module_from_path(path: str) -> Optional[str]:
     """Try to extract the Odoo module name from a file path.
 
     A module is the directory directly under /mnt/extra-addons/ that
-    contains a __manifest__.py. Path examples accepted:
-      /mnt/extra-addons/saasy/views/foo.xml      -> "saasy"
-      /mnt/extra-addons/saasy-odoo-addon/saasy/  -> "saasy"
+    contains a __manifest__.py. Accepts multiple path formats :
+      /mnt/extra-addons/saasy/views/foo.xml         -> "saasy"
+      /mnt/extra-addons/saasy-odoo-addon/saasy/...  -> "saasy"
+      addons/saasy/views/foo.xml                    -> "saasy" (relative to JupyterLab root_dir)
+      addons/saasy-odoo-addon/saasy/...             -> "saasy"
     """
     if not path:
         return None
 
-    # Normalise et coupe sur /mnt/extra-addons/
-    marker = "/mnt/extra-addons/"
-    if marker not in path:
+    # Normalise: extract the part after /mnt/extra-addons/ or addons/
+    rel = None
+    for marker in ("/mnt/extra-addons/", "/home/jovyan/work/addons/", "addons/"):
+        if marker in path:
+            rel = path.split(marker, 1)[1]
+            break
+    if rel is None:
         return None
-    rel = path.split(marker, 1)[1]
+
     parts = [p for p in rel.split("/") if p]
     if not parts:
         return None
@@ -134,6 +142,58 @@ class RestartHandler(APIHandler):
         self.finish(json.dumps(result))
 
 
+class LogsStreamHandler(APIHandler):
+    """SSE: GET /saasy-odoo/logs/stream?tail=50
+
+    Stream `docker logs -f --tail=N <container>` line by line as Server-Sent
+    Events. Each event has format `data: {"line": "..."}`. The connection
+    stays open until the client closes it (or the container stops).
+    """
+
+    @tornado.web.authenticated
+    async def get(self):
+        try:
+            tail = int(self.get_argument("tail", "50"))
+        except ValueError:
+            tail = 50
+        tail = min(max(tail, 0), 1000)
+
+        self.set_header("Content-Type", "text/event-stream")
+        self.set_header("Cache-Control", "no-cache")
+        self.set_header("X-Accel-Buffering", "no")  # disable Nginx buffering
+        self.set_header("Connection", "keep-alive")
+
+        # Spawn docker logs -f as a subprocess, stream its stdout
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "logs", "-f", f"--tail={tail}", ODOO_CONTAINER,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+        )
+
+        try:
+            # Initial event so the client knows the stream is live
+            self.write('data: {"line":"[connected to docker logs]\\n"}\n\n')
+            await self.flush()
+
+            while True:
+                line_bytes = await proc.stdout.readline()
+                if not line_bytes:
+                    break
+                line = line_bytes.decode("utf-8", errors="replace")
+                # SSE format: data: <json>\n\n
+                self.write(f"data: {json.dumps({'line': line})}\n\n")
+                await self.flush()
+        except (StreamClosedError, ConnectionResetError):
+            # Client closed the connection — clean shutdown
+            pass
+        finally:
+            try:
+                proc.terminate()
+                await asyncio.wait_for(proc.wait(), timeout=2)
+            except asyncio.TimeoutError:
+                proc.kill()
+
+
 class CurrentModuleHandler(APIHandler):
     """GET /saasy-odoo/current-module?path=<file-path>
 
@@ -154,6 +214,7 @@ def setup_handlers(web_app):
     handlers = [
         (url_path_join(base_url, "saasy-odoo", "update"), UpdateModuleHandler),
         (url_path_join(base_url, "saasy-odoo", "logs"), ServerLogsHandler),
+        (url_path_join(base_url, "saasy-odoo", "logs", "stream"), LogsStreamHandler),
         (url_path_join(base_url, "saasy-odoo", "restart"), RestartHandler),
         (url_path_join(base_url, "saasy-odoo", "current-module"), CurrentModuleHandler),
     ]

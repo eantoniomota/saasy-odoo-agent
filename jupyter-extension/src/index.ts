@@ -3,15 +3,18 @@ import {
   JupyterFrontEndPlugin
 } from '@jupyterlab/application';
 import { Dialog, showDialog, Notification } from '@jupyterlab/apputils';
+import { URLExt } from '@jupyterlab/coreutils';
 import { IMainMenu } from '@jupyterlab/mainmenu';
 import { INotebookTracker } from '@jupyterlab/notebook';
-import { Menu } from '@lumino/widgets';
+import { ServerConnection } from '@jupyterlab/services';
+import { Menu, Widget } from '@lumino/widgets';
 
 import { requestAPI } from './handler';
 
 namespace CommandIDs {
   export const updateModule = 'saasy-odoo:update-module';
   export const showLogs = 'saasy-odoo:show-logs';
+  export const liveLogs = 'saasy-odoo:live-logs';
   export const restart = 'saasy-odoo:restart';
 }
 
@@ -49,13 +52,15 @@ const plugin: JupyterFrontEndPlugin<void> = {
     const { commands } = app;
 
     // ── Detect current module from active widget path ──────────────────────
+    // Le path retourne par JupyterLab est relatif au root_dir (ex: "addons/saasy/views/foo.xml").
+    // L'endpoint backend gere les prefixes /mnt/extra-addons/, /home/jovyan/work/addons/ et addons/.
     async function detectCurrentModule(): Promise<string | null> {
       const widget = app.shell.currentWidget;
       const path = (widget as any)?.context?.path || '';
       if (!path) return null;
       try {
         const resp = await requestAPI<ICurrentModuleResponse>(
-          `current-module?path=${encodeURIComponent(`/mnt/extra-addons/${path}`)}`
+          `current-module?path=${encodeURIComponent(path)}`
         );
         return resp.module;
       } catch {
@@ -138,45 +143,63 @@ const plugin: JupyterFrontEndPlugin<void> = {
       }
     });
 
+    // ── Live Logs (streaming) ──────────────────────────────────────────────
+    commands.addCommand(CommandIDs.liveLogs, {
+      label: 'Live Logs (stream)…',
+      caption: 'Open a shell-like window streaming Odoo logs in real-time',
+      execute: () => openStreamingLogs('Odoo — Live Logs')
+    });
+
     // ── Restart ────────────────────────────────────────────────────────────
     commands.addCommand(CommandIDs.restart, {
       label: 'Restart Odoo',
-      caption: 'Restart the Odoo container (sessions will be interrupted)',
+      caption: 'Restart the Odoo container — opens a live log shell',
       execute: async () => {
         const result = await showDialog({
           title: 'Restart Odoo?',
-          body: 'This will restart the Odoo container. Active user sessions will be briefly interrupted.',
+          body: 'This will restart the Odoo container. A live log window will open so you can watch the boot.',
           buttons: [
             Dialog.cancelButton(),
             Dialog.warnButton({ label: 'Restart' })
           ]
         });
         if (!result.button.accept) return;
-        const notif = Notification.emit('Restarting Odoo…', 'in-progress', {
-          autoClose: false
-        });
+
+        // Ouvre la fenetre shell AVANT le restart pour voir le boot
+        openStreamingLogs('Odoo — Restarting…');
+
+        // Lance le restart en parallele
         try {
           const resp = await requestAPI<{ ok: boolean; stderr: string }>('restart', {
             method: 'POST'
           });
-          Notification.dismiss(notif);
           if (resp.ok) {
-            Notification.success('Odoo restarted');
+            Notification.success('Odoo restart initiated — see live logs window');
           } else {
             Notification.error(`Restart failed: ${resp.stderr}`);
           }
         } catch (err) {
-          Notification.dismiss(notif);
           Notification.error(`Restart failed: ${(err as Error).message}`);
         }
       }
     });
+
+    // ── Helper : ouvre un widget de streaming logs en MainArea ─────────────
+    function openStreamingLogs(title: string): void {
+      const widget = new StreamingLogsWidget();
+      widget.id = `saasy-odoo-logs-${Date.now()}`;
+      widget.title.label = title;
+      widget.title.closable = true;
+      app.shell.add(widget, 'main');
+      app.shell.activateById(widget.id);
+    }
 
     // ── Build menu ─────────────────────────────────────────────────────────
     const menu = new Menu({ commands });
     menu.title.label = 'Odoo';
     menu.addItem({ command: CommandIDs.updateModule });
     menu.addItem({ command: CommandIDs.showLogs });
+    menu.addItem({ command: CommandIDs.liveLogs });
     menu.addItem({ type: 'separator' });
     menu.addItem({ command: CommandIDs.restart });
     mainMenu.addMenu(menu, false, { rank: 100 });
@@ -189,8 +212,6 @@ const plugin: JupyterFrontEndPlugin<void> = {
 export default plugin;
 
 // ── Small input widget for module prompt ─────────────────────────────────
-import { Widget } from '@lumino/widgets';
-
 class ModulePromptWidget extends Widget {
   constructor(defaultValue: string) {
     super();
@@ -211,4 +232,84 @@ class ModulePromptWidget extends Widget {
     return this._input.value;
   }
   private _input: HTMLInputElement;
+}
+
+// ── Streaming logs widget (terminal-like view) ───────────────────────────
+class StreamingLogsWidget extends Widget {
+  private _source: EventSource | null = null;
+  private _pre: HTMLPreElement;
+
+  constructor() {
+    super();
+    this.addClass('saasy-odoo-streaming-logs');
+    this.node.style.background = '#0d1117';
+    this.node.style.padding = '8px';
+    this.node.style.height = '100%';
+    this.node.style.boxSizing = 'border-box';
+    this.node.style.overflow = 'hidden';
+    this.node.style.display = 'flex';
+    this.node.style.flexDirection = 'column';
+
+    const header = document.createElement('div');
+    header.textContent = '$ docker logs -f odoo  (Ctrl+Q to disconnect)';
+    header.style.color = '#7ee787';
+    header.style.fontFamily = 'monospace';
+    header.style.fontSize = '11px';
+    header.style.marginBottom = '6px';
+    header.style.flexShrink = '0';
+    this.node.appendChild(header);
+
+    this._pre = document.createElement('pre');
+    this._pre.style.flex = '1';
+    this._pre.style.overflow = 'auto';
+    this._pre.style.fontSize = '12px';
+    this._pre.style.whiteSpace = 'pre-wrap';
+    this._pre.style.wordBreak = 'break-all';
+    this._pre.style.background = '#0d1117';
+    this._pre.style.color = '#c9d1d9';
+    this._pre.style.padding = '8px';
+    this._pre.style.fontFamily = 'monospace';
+    this._pre.style.margin = '0';
+    this._pre.style.border = '1px solid #30363d';
+    this._pre.style.borderRadius = '4px';
+    this.node.appendChild(this._pre);
+
+    this.startStream();
+  }
+
+  private startStream(): void {
+    const settings = ServerConnection.makeSettings();
+    const url = URLExt.join(settings.baseUrl, 'saasy-odoo', 'logs', 'stream');
+    this._source = new EventSource(`${url}?tail=50`, { withCredentials: true });
+
+    this._source.onmessage = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data);
+        this.appendLine(data.line || '');
+      } catch {
+        this.appendLine(e.data + '\n');
+      }
+    };
+
+    this._source.onerror = () => {
+      this.appendLine('\n[stream interrupted — reconnect by re-opening the window]\n');
+      this._source?.close();
+      this._source = null;
+    };
+  }
+
+  private appendLine(line: string): void {
+    const wasAtBottom =
+      this._pre.scrollTop + this._pre.clientHeight >= this._pre.scrollHeight - 20;
+    this._pre.appendChild(document.createTextNode(line));
+    if (wasAtBottom) {
+      this._pre.scrollTop = this._pre.scrollHeight;
+    }
+  }
+
+  dispose(): void {
+    this._source?.close();
+    this._source = null;
+    super.dispose();
+  }
 }

@@ -341,7 +341,10 @@ export async function installOdoo(opts: InstallOdooOptions): Promise<{ token: st
     `-v ${opts.notebookDir}:/home/jovyan/work`,
     `-v ${odooConfPath}:/etc/odoo/odoo.conf:ro`,
     '-v /var/run/docker.sock:/var/run/docker.sock',
+    // /mnt/extra-addons : pour la detection de module + parite avec Odoo
     addonsPath ? `-v ${addonsPath}:/mnt/extra-addons` : '',
+    // /home/jovyan/work/addons : visible dans le file browser de JupyterLab
+    addonsPath ? `-v ${addonsPath}:/home/jovyan/work/addons` : '',
     '--workdir /home/jovyan/work',
     `-e ODOO_DB=${opts.dbName}`,
     `-e ODOO_RC=/etc/odoo/odoo.conf`,
