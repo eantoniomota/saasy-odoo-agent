@@ -19,16 +19,23 @@ export function getCurrentBranch(repoPath: string): string {
   return exec(`git -C ${repoPath} rev-parse --abbrev-ref HEAD`);
 }
 
-export function fetch(repoPath: string, branch: string): void {
-  execSync(`git -C ${repoPath} fetch origin ${branch}`, { stdio: 'inherit' });
+export function fetch(repoPath: string, _branch?: string): void {
+  // fetch --all + --prune : recupere TOUS les refs (pas juste une branche)
+  // pour que le checkout d'un SHA arbitraire fonctionne ensuite.
+  execSync(`git -C ${repoPath} fetch --all --prune --tags`, { stdio: 'inherit' });
 }
 
 export function checkout(repoPath: string, ref: string): void {
   execSync(`git -C ${repoPath} checkout ${ref}`, { stdio: 'inherit' });
 }
 
+/**
+ * Aligne la branche locale sur origin/<branch> de force.
+ * Plus robuste que `git pull --ff-only` qui peut silencieusement no-op
+ * dans certains cas (HEAD detache, rebase en cours, etc.).
+ */
 export function pull(repoPath: string, branch: string): void {
-  execSync(`git -C ${repoPath} pull --ff-only origin ${branch}`, { stdio: 'inherit' });
+  execSync(`git -C ${repoPath} reset --hard origin/${branch}`, { stdio: 'inherit' });
 }
 
 /** Liste les fichiers changes entre deux commits (relatifs a la racine du repo). */
