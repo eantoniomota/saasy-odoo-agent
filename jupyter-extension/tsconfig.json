@@ -15,9 +15,11 @@
     "preserveWatchOutput": true,
     "resolveJsonModule": true,
     "rootDir": "src",
+    "skipLibCheck": true,
     "strict": true,
     "strictNullChecks": true,
     "target": "ES2018",
+    "types": [],
     "lib": ["DOM", "ES2018"]
   },
   "include": ["src/*"]
