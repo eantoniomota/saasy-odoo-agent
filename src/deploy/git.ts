@@ -57,3 +57,26 @@ export function repoExists(repoPath: string): boolean {
     return false;
   }
 }
+
+/**
+ * Clone un repo GitHub. Si token fourni, l'inclut dans l'URL pour
+ * l'authentification (utile pour les repos privés client).
+ *
+ * Le token n'est jamais loggé : on log uniquement la version sanitized.
+ */
+export function clone(repoUrl: string, repoPath: string, token?: string): void {
+  const sanitized = repoUrl.replace(/\/\/[^@]+@/, '//');
+  console.log(`[Git] Cloning ${sanitized} → ${repoPath}`);
+
+  const urlWithToken = token
+    ? repoUrl.replace(/^https:\/\//, `https://x-access-token:${token}@`)
+    : repoUrl;
+
+  execSync(`mkdir -p $(dirname ${repoPath})`, { stdio: 'ignore' });
+  execSync(`git clone ${urlWithToken} ${repoPath}`, { stdio: 'inherit' });
+}
+
+/** Convertit "owner/repo" en URL HTTPS GitHub. */
+export function repoUrlFromSlug(ownerSlashRepo: string): string {
+  return `https://github.com/${ownerSlashRepo}.git`;
+}

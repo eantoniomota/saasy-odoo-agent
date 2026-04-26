@@ -54,14 +54,22 @@ export const config = Object.freeze({
   webhookOdooContainer: process.env.WEBHOOK_ODOO_CONTAINER || 'odoo',
 
   // Deploy (declenchement Saasy → agent → git pull + odoo update + restart)
-  // DEPLOY_BASE_PATH/<env-slug>/<repo-name>/ doit pointer vers le clone du repo.
-  // Convention par defaut :
-  //   /host/deployments/production/saasy-odoo-addon
-  //   /host/deployments/staging/saasy-odoo-addon
+  //
+  // L'agent clone et tient a jour un repo Git du client (ses addons custom
+  // Odoo). DEPLOY_GITHUB_REPO definit ce repo (format "owner/repo").
+  // Si le repo est prive, fournir DEPLOY_GITHUB_TOKEN (PAT GitHub).
+  //
+  // Le repo est clone dans :
+  //   <DEPLOY_BASE_PATH>/<env-slug>/<repo-name>
+  // ou repo-name est le dernier segment de DEPLOY_GITHUB_REPO.
+  // Ex: DEPLOY_GITHUB_REPO=acme/odoo-stack → /host/deployments/production/odoo-stack
   deployBasePath: process.env.DEPLOY_BASE_PATH || '/host/deployments',
-  deployRepoName: process.env.DEPLOY_REPO_NAME || 'saasy-odoo-addon',
-  deployModule: process.env.DEPLOY_MODULE || 'saasy',
-  // Optionnel : secret pour authentifier le webhook deploy. Saasy doit le passer
-  // soit via header X-Deploy-Secret soit via query param ?secret=.
+  deployGithubRepo: process.env.DEPLOY_GITHUB_REPO || '',  // owner/repo
+  deployGithubToken: process.env.DEPLOY_GITHUB_TOKEN || '', // PAT pour repos prives
+  // Module Odoo a updater (un repo client peut contenir plusieurs modules,
+  // mais on update typiquement le module principal).
+  deployModule: process.env.DEPLOY_MODULE || '',
+  // Secret pour authentifier le webhook deploy. Saasy l'envoie dans
+  // le header X-Deploy-Secret (auto-genere par env cote Saasy).
   deploySecret: process.env.DEPLOY_SECRET || '',
 });

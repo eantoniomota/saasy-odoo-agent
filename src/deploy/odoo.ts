@@ -40,16 +40,35 @@ export interface DeployResult {
 interface ResolvedDeployConfig {
   envSlug: string;
   repoPath: string;
+  repoUrl: string;
+  repoToken: string;
   odooContainer: string;
   dbName: string;
   module: string;
 }
 
 function resolveDeployConfig(envSlug: string): ResolvedDeployConfig {
+  if (!config.deployGithubRepo) {
+    throw new Error(
+      'DEPLOY_GITHUB_REPO non configure cote agent. ' +
+      'Format attendu : "owner/repo" (ex: "acme/odoo-stack").',
+    );
+  }
+  if (!config.deployModule) {
+    throw new Error(
+      'DEPLOY_MODULE non configure cote agent. ' +
+      'C\'est le nom technique du module Odoo a update (ex: "acme_app").',
+    );
+  }
+
+  const repoName = config.deployGithubRepo.split('/').pop() || 'repo';
   const isProd = envSlug === 'production';
+
   return {
     envSlug,
-    repoPath: join(config.deployBasePath, envSlug, config.deployRepoName),
+    repoPath: join(config.deployBasePath, envSlug, repoName),
+    repoUrl: git.repoUrlFromSlug(config.deployGithubRepo),
+    repoToken: config.deployGithubToken,
     odooContainer: isProd ? 'odoo' : `odoo-${envSlug}`,
     dbName: isProd ? 'odoo' : `odoo_${envSlug}`,
     module: config.deployModule,
@@ -84,13 +103,10 @@ export async function deployOdoo(opts: DeployOdooOptions): Promise<DeployResult>
   console.log(`[Deploy] module         : ${cfg.module}`);
   if (opts.message) console.log(`[Deploy] message        : ${opts.message.split('\n')[0]}`);
 
-  // Verifier que le repo existe
+  // Auto-clone si le repo n'existe pas (premier deploy)
   if (!git.repoExists(cfg.repoPath)) {
-    throw new Error(
-      `Le repo "${cfg.repoPath}" n'existe pas ou n'est pas un git repo. ` +
-      `Clone-le manuellement avant le premier deploy : ` +
-      `git clone <url> ${cfg.repoPath}`,
-    );
+    console.log(`[Deploy] Premier deploy — clone du repo`);
+    git.clone(cfg.repoUrl, cfg.repoPath, cfg.repoToken);
   }
 
   // Override [odoo:skip] → on skip avant meme le pull
