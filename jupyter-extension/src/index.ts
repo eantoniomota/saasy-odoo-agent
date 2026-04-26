@@ -69,29 +69,32 @@ const plugin: JupyterFrontEndPlugin<void> = {
     }
 
     // ── Update Module ──────────────────────────────────────────────────────
+    // Auto-detecte le module depuis le fichier actif. Si trouve, update direct.
+    // Sinon, demande le nom au user.
     commands.addCommand(CommandIDs.updateModule, {
-      label: 'Update Module…',
+      label: 'Update Module',
       caption: 'Update the Odoo module of the currently open file',
       execute: async () => {
-        const detected = await detectCurrentModule();
-        const result = await showDialog({
-          title: 'Update Odoo module',
-          body: new ModulePromptWidget(detected || ''),
-          buttons: [
-            Dialog.cancelButton(),
-            Dialog.okButton({ label: 'Update' })
-          ]
-        });
-        if (!result.button.accept) return;
-        const module = (result.value || '').trim();
+        let module = await detectCurrentModule();
+
         if (!module) {
-          await showDialog({
+          // Fallback : prompt si pas detecte (ex: fichier hors du dossier addons)
+          const result = await showDialog({
             title: 'Update Odoo module',
-            body: 'Module name is required.',
-            buttons: [Dialog.okButton()]
+            body: new ModulePromptWidget(''),
+            buttons: [
+              Dialog.cancelButton(),
+              Dialog.okButton({ label: 'Update' })
+            ]
           });
-          return;
+          if (!result.button.accept) return;
+          module = ((result.value as string) || '').trim();
+          if (!module) {
+            Notification.error('Module name is required');
+            return;
+          }
         }
+
         const notif = Notification.emit(`Updating module ${module}…`, 'in-progress', {
           autoClose: false
         });

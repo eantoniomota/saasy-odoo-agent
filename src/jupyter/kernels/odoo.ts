@@ -61,17 +61,36 @@ c.ServerApp.root_dir = '/home/jovyan/work'
 
 const DARK_THEME_SETTINGS = JSON.stringify({ theme: 'JupyterLab Dark' });
 
+const JUPYTER_ENTRYPOINT_SH = `#!/bin/bash
+set -e
+
+# Ajuste dynamiquement le groupe 'docker' pour correspondre au GID du
+# socket monte depuis l'hote. Sans ca, le user 'odoo' ne peut pas
+# acceder a /var/run/docker.sock (Permission denied).
+if [ -S /var/run/docker.sock ]; then
+  HOST_DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+  CONTAINER_DOCKER_GID=$(getent group docker | cut -d: -f3 || true)
+  if [ -z "$CONTAINER_DOCKER_GID" ]; then
+    groupadd -g "$HOST_DOCKER_GID" docker
+  elif [ "$HOST_DOCKER_GID" != "$CONTAINER_DOCKER_GID" ]; then
+    groupmod -g "$HOST_DOCKER_GID" docker
+  fi
+  usermod -aG docker odoo 2>/dev/null || true
+fi
+
+# Drop privileges et exec jupyter en tant que 'odoo'
+exec runuser -u odoo -- "$@"
+`;
+
 const DOCKERFILE = `FROM odoo:17
 
 USER root
 
 # docker.io pour permettre a l'extension Odoo Admin (depuis Jupyter)
 # d'executer docker exec/restart sur le container Odoo via /var/run/docker.sock
-RUN apt-get update && apt-get install -y python3-pip python3-venv docker.io \\
+# util-linux fournit 'runuser' (drop privileges)
+RUN apt-get update && apt-get install -y python3-pip python3-venv docker.io util-linux \\
     && rm -rf /var/lib/apt/lists/*
-
-# Permettre au user 'odoo' d'utiliser le socket Docker (membre du groupe docker)
-RUN usermod -aG docker odoo
 
 RUN pip3 install --break-system-packages --ignore-installed \\
     jupyterlab ipykernel jupyter-server
@@ -104,8 +123,13 @@ RUN mkdir -p /var/lib/odoo/.jupyter/lab/user-settings/@jupyterlab/apputils-exten
     && cp /tmp/themes.jupyterlab-settings /var/lib/odoo/.jupyter/lab/user-settings/@jupyterlab/apputils-extension/themes.jupyterlab-settings \\
     && chown -R odoo:odoo /var/lib/odoo/.jupyter
 
-USER odoo
+# Entrypoint qui ajuste le groupe docker au runtime puis drop sur user 'odoo'
+COPY jupyter-entrypoint.sh /usr/local/bin/jupyter-entrypoint.sh
+RUN chmod +x /usr/local/bin/jupyter-entrypoint.sh
+
+# Reste root pour permettre a l'entrypoint d'ajuster le groupe docker
 EXPOSE 8888
+ENTRYPOINT ["/usr/local/bin/jupyter-entrypoint.sh"]
 CMD ["jupyter", "lab", "--ip=0.0.0.0", "--port=8888", "--no-browser"]
 `;
 
@@ -187,6 +211,7 @@ export function buildOdooImage(opts: OdooImageOptions): void {
 
   writeFileSync(join(dir, 'jupyter_server_config.py'), JUPYTER_CONFIG_PY);
   writeFileSync(join(dir, 'themes.jupyterlab-settings'), DARK_THEME_SETTINGS);
+  writeFileSync(join(dir, 'jupyter-entrypoint.sh'), JUPYTER_ENTRYPOINT_SH);
 
   // Copie l'extension JupyterLab "saasy_jupyter_odoo" dans la build context.
   // Le Dockerfile fait ensuite pip install /tmp/jupyter-extension
