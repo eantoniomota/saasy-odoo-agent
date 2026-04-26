@@ -14,10 +14,12 @@ FROM node:20-alpine
 
 WORKDIR /app
 
-# su-exec : drop des privileges proprement apres l'init du groupe docker
+# su-exec  : drop des privileges proprement apres l'init du groupe docker
 # docker-cli : permet a l'agent d'utiliser `docker` pour piloter les containers
 #   Jupyter via le socket monte (commandes `saasy-odoo-agent jupyter ...`)
-RUN apk add --no-cache su-exec docker-cli
+# git      : pour les commandes `saasy-odoo-agent deploy` (git pull dans le repo addon)
+RUN apk add --no-cache su-exec docker-cli git \
+    && git config --system --add safe.directory '*'
 
 # User non-root ; le groupe sera ajuste dynamiquement par l'entrypoint
 RUN addgroup -S saasy && adduser -S agent -G saasy
