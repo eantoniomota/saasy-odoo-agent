@@ -156,6 +156,27 @@ function terminateDbConnections(cfg: ResolvedConfig): void {
   }
 }
 
+/**
+ * Purge les bundles d'assets compiles (web.assets_*.min.js/css) de la table
+ * ir_attachment. Apres un restore, leurs `store_fname` peuvent referencer des
+ * fichiers absents du filestore restaure → Odoo renvoie 500 sur les assets.
+ * En les supprimant, Odoo les recompile a la volee au premier hit (premier
+ * chargement lent ~10-30s, suivants normaux). A appeler avec Odoo stoppe.
+ */
+function purgeAssetBundles(cfg: ResolvedConfig): void {
+  console.log("[Restore] Purge des bundles d'assets compiles (recompilation lazy)...");
+  const sql = "DELETE FROM ir_attachment WHERE name LIKE 'web.assets_%' OR name LIKE '/web/assets/%';";
+  try {
+    execSync(
+      `docker exec ${cfg.dbContainer} psql -U ${cfg.dbUser} -d ${cfg.dbName} -c "${sql}"`,
+      { stdio: 'ignore' },
+    );
+  } catch (err) {
+    // Non bloquant : si ca rate, l'utilisateur peut purger manuellement.
+    console.warn(`[Restore] Purge des bundles a echoue (non critique): ${(err as Error).message}`);
+  }
+}
+
 function restoreDatabase(cfg: ResolvedConfig, dumpPath: string): void {
   console.log(`[Restore] pg_restore ${cfg.dbName} (user ${cfg.dbUser}) dans ${cfg.dbContainer}...`);
   // On copie le dump dans le container puis on fait pg_restore --clean.
@@ -234,6 +255,7 @@ export async function restoreOdoo(opts: RestoreOdooOptions): Promise<RestoreResu
 
     restoreDatabase(cfg, join(workDir, 'dump.dump'));
     restoreFilestore(cfg, join(workDir, 'filestore.tar'));
+    purgeAssetBundles(cfg);
 
     console.log('[Restore] Demarrage Odoo pour reload du code...');
     // docker start (et non restart) car le container est stoppe.
