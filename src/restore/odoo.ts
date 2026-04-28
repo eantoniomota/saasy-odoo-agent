@@ -112,6 +112,50 @@ function extractArchive(archivePath: string, workDir: string): void {
   execSync(`tar xzf ${archivePath} -C ${workDir}`, { stdio: 'ignore' });
 }
 
+/**
+ * Coupe le container Odoo pour liberer les connexions a la DB. Sans cela,
+ * pg_restore --clean reste bloque indefiniment sur des verrous tenus par les
+ * workers Odoo (typiquement une transaction "idle in transaction" qui maintient
+ * un AccessShareLock empechant le DROP des contraintes).
+ */
+function stopOdoo(cfg: ResolvedConfig): void {
+  console.log(`[Restore] Stop ${cfg.odooContainer} pour liberer la DB...`);
+  try {
+    execSync(`docker stop ${cfg.odooContainer}`, { stdio: 'ignore' });
+  } catch (err) {
+    // Si deja stoppe, on continue (idempotent)
+    console.warn(`[Restore] docker stop a echoue (peut-etre deja stoppe): ${(err as Error).message}`);
+  }
+}
+
+/**
+ * Termine toutes les sessions PostgreSQL restantes sur la DB cible. A appeler
+ * APRES stopOdoo pour nettoyer les connexions zombies (transactions idle non
+ * fermees proprement par Odoo a l'arret) avant pg_restore.
+ */
+function terminateDbConnections(cfg: ResolvedConfig): void {
+  console.log(`[Restore] Termine les connexions residuelles sur ${cfg.dbName}...`);
+  // On se connecte sur "postgres" (pas la DB cible) pour ne pas se faire kill nous-memes.
+  // pg_terminate_backend renvoie true par session tuee — nombre logge pour info.
+  const sql = `SELECT count(*) FROM pg_stat_activity WHERE datname='${cfg.dbName}' AND pid <> pg_backend_pid();`;
+  const killSql = `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname='${cfg.dbName}' AND pid <> pg_backend_pid();`;
+  try {
+    const before = execSync(
+      `docker exec ${cfg.dbContainer} psql -U ${cfg.dbUser} -d postgres -tAc "${sql}"`,
+      { encoding: 'utf-8' },
+    ).trim();
+    if (before && before !== '0') {
+      execSync(
+        `docker exec ${cfg.dbContainer} psql -U ${cfg.dbUser} -d postgres -c "${killSql}"`,
+        { stdio: 'ignore' },
+      );
+      console.log(`[Restore] ${before} connexion(s) tuee(s)`);
+    }
+  } catch (err) {
+    console.warn(`[Restore] terminate connections a echoue: ${(err as Error).message}`);
+  }
+}
+
 function restoreDatabase(cfg: ResolvedConfig, dumpPath: string): void {
   console.log(`[Restore] pg_restore ${cfg.dbName} (user ${cfg.dbUser}) dans ${cfg.dbContainer}...`);
   // On copie le dump dans le container puis on fait pg_restore --clean.
@@ -183,11 +227,17 @@ export async function restoreOdoo(opts: RestoreOdooOptions): Promise<RestoreResu
       console.warn('[Restore] manifest.json absent ou invalide — on continue');
     }
 
+    // Couper Odoo AVANT pg_restore pour liberer les locks DB (sinon
+    // pg_restore --clean reste bloque sur DROP CONSTRAINT indefiniment).
+    stopOdoo(cfg);
+    terminateDbConnections(cfg);
+
     restoreDatabase(cfg, join(workDir, 'dump.dump'));
     restoreFilestore(cfg, join(workDir, 'filestore.tar'));
 
-    console.log('[Restore] Restart Odoo pour reload du code...');
-    execSync(`docker restart ${cfg.odooContainer}`, { stdio: 'ignore' });
+    console.log('[Restore] Demarrage Odoo pour reload du code...');
+    // docker start (et non restart) car le container est stoppe.
+    execSync(`docker start ${cfg.odooContainer}`, { stdio: 'ignore' });
 
     const durationMs = Date.now() - start;
     console.log(`[Restore] OK — termine en ${(durationMs / 1000).toFixed(1)}s`);
@@ -197,6 +247,16 @@ export async function restoreOdoo(opts: RestoreOdooOptions): Promise<RestoreResu
     console.error('[Restore] Echec :', message);
     return { success: false, durationMs: Date.now() - start, error: message };
   } finally {
+    // Garantie : Odoo redemarre meme en cas d'echec, sinon le prochain restore
+    // refusera car resolveConfig exige Odoo running. Best-effort, pas d'erreur.
+    if (!containerRunning(cfg.odooContainer)) {
+      try {
+        console.log(`[Restore] Demarrage de secours de ${cfg.odooContainer}`);
+        execSync(`docker start ${cfg.odooContainer}`, { stdio: 'ignore' });
+      } catch (startErr) {
+        console.warn('[Restore] docker start de secours a echoue :', (startErr as Error).message);
+      }
+    }
     try {
       rmSync(workDir, { recursive: true, force: true });
     } catch (cleanupErr) {
