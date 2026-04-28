@@ -15,11 +15,29 @@ import { config } from '../config';
 import { backupOdoo } from '../backup/odoo';
 import type { BackupRecord } from '../backup/api-client';
 import { deployOdoo, type DeployResult } from '../deploy/odoo';
+import { restoreOdoo, notifyRestoreStatus } from '../restore/odoo';
 
 interface WebhookBody {
   appId?: string;
   action?: string;
   name?: string;
+  timestamp?: string;
+}
+
+interface RestoreBody {
+  action?: 'restore-backup' | string;
+  restoreId?: string;
+  appId?: string;
+  branch?: string;
+  backup?: {
+    id?: string;
+    filename?: string;
+    downloadUrl?: string;
+    sizeBytes?: number;
+    checksum?: string;
+    description?: string;
+    serverName?: string;
+  };
   timestamp?: string;
 }
 
@@ -173,6 +191,85 @@ async function handleTriggerDeploy(req: http.IncomingMessage, res: http.ServerRe
     });
 }
 
+/**
+ * POST /restore-backup
+ *
+ * Recoit le webhook de Saasy quand l'utilisateur clique "Restaurer". Body envoye
+ * par Saasy (cf. InfraBackupService.restoreBackup) :
+ *
+ *   {
+ *     "action": "restore-backup",
+ *     "restoreId": "...",
+ *     "appId": "...",
+ *     "branch": "<cible>",
+ *     "backup": {
+ *       "id": "...",
+ *       "filename": "odoo-...tar.gz",
+ *       "downloadUrl": "https://s3...",
+ *       "sizeBytes": 12345,
+ *       "checksum": "..."
+ *     },
+ *     "timestamp": "..."
+ *   }
+ *
+ * Auth via X-Backup-Secret (meme secret que /trigger-backup). On repond 202
+ * immediatement et on lance la restauration en arriere-plan, puis on notifie
+ * le statut via l'API publique Saasy (X-API-Key).
+ */
+async function handleRestoreBackup(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const providedSecret = req.headers['x-backup-secret'];
+  if (!providedSecret || providedSecret !== config.webhookSecret) {
+    send(res, 403, { error: 'Forbidden' });
+    return;
+  }
+
+  let body: RestoreBody = {};
+  try {
+    body = (await readBody(req)) as RestoreBody;
+  } catch (err) {
+    send(res, 400, { error: (err as Error).message });
+    return;
+  }
+
+  if (!body.restoreId || !body.appId || !body.backup?.downloadUrl) {
+    send(res, 400, { error: 'Champs requis manquants : restoreId, appId, backup.downloadUrl' });
+    return;
+  }
+
+  const restoreId = body.restoreId;
+  const branch = body.branch || 'unknown';
+  const filename = body.backup.filename || 'archive.tar.gz';
+  const downloadUrl = body.backup.downloadUrl;
+
+  // Repond 202 immediatement, la restauration tourne en arriere-plan
+  send(res, 202, { ok: true, message: 'Restore started', restoreId, branch });
+
+  console.log(`[Webhook] Restore declenche par Saasy : id=${restoreId}, branch=${branch}, file=${filename}`);
+
+  restoreOdoo({
+    restoreId,
+    appId: body.appId,
+    branch,
+    odooContainer: config.webhookOdooContainer,
+    downloadUrl,
+    filename,
+    expectedChecksum: body.backup.checksum,
+  })
+    .then(async (result) => {
+      if (result.success) {
+        console.log(`[Webhook] Restore termine OK en ${(result.durationMs / 1000).toFixed(1)}s`);
+        await notifyRestoreStatus(restoreId, 'success');
+      } else {
+        console.error(`[Webhook] Restore echoue : ${result.error}`);
+        await notifyRestoreStatus(restoreId, 'failed', result.error);
+      }
+    })
+    .catch(async (err: Error) => {
+      console.error('[Webhook] Restore echoue (exception) :', err.message);
+      await notifyRestoreStatus(restoreId, 'failed', err.message);
+    });
+}
+
 export function startWebhookServer(): http.Server | null {
   // Le server demarre si AU MOINS un des secrets est configure
   if (!config.webhookSecret && !config.deploySecret) {
@@ -201,6 +298,17 @@ export function startWebhookServer(): http.Server | null {
       });
       return;
     }
+    if (req.method === 'POST' && path === '/restore-backup') {
+      if (!config.webhookSecret) {
+        send(res, 404, { error: 'Restore webhook desactive (WEBHOOK_SECRET non configure)' });
+        return;
+      }
+      handleRestoreBackup(req, res).catch((err) => {
+        console.error('[Webhook] Erreur handler restore :', err);
+        send(res, 500, { error: 'Internal error' });
+      });
+      return;
+    }
     if (req.method === 'GET' && path === '/health') {
       send(res, 200, { ok: true });
       return;
@@ -214,7 +322,10 @@ export function startWebhookServer(): http.Server | null {
   // le port mapping route via 0.0.0.0 du container, pas son loopback interne.
   server.listen(config.webhookPort, '0.0.0.0', () => {
     const enabled: string[] = [];
-    if (config.webhookSecret) enabled.push(`/trigger-backup (env=${config.webhookEnvId || '?'})`);
+    if (config.webhookSecret) {
+      enabled.push(`/trigger-backup (env=${config.webhookEnvId || '?'})`);
+      enabled.push(`/restore-backup`);
+    }
     if (config.deploySecret) enabled.push(`/trigger-deploy`);
     console.log(`  Webhook    : http://0.0.0.0:${config.webhookPort} → ${enabled.join(', ') || '(aucun)'}`);
   });
