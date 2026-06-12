@@ -8,10 +8,12 @@
  */
 import { runCli as runJupyterCli } from './jupyter/cli';
 import { runCli as runBackupCli } from './backup/cli';
+import { runCli as runUsersCli } from './users/cli';
 
 const MODULES: Record<string, (argv: string[]) => Promise<void>> = {
   jupyter: runJupyterCli,
   backup: runBackupCli,
+  users: runUsersCli,
 };
 
 async function main() {
