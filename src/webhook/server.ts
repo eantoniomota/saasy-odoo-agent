@@ -144,7 +144,9 @@ async function handleTriggerDeploy(req: http.IncomingMessage, res: http.ServerRe
       querySecret = u.searchParams.get('secret');
     } catch { /* ignore parsing error */ }
     const provided = headerSecret || querySecret;
-    if (provided !== config.deploySecret) {
+    // DEPLOY_SECRET accepte une liste separee par virgules (un secret par env Saasy)
+    const validSecrets = config.deploySecret.split(',').map((s) => s.trim()).filter(Boolean);
+    if (!provided || !validSecrets.includes(provided as string)) {
       send(res, 403, { error: 'Forbidden' });
       return;
     }
