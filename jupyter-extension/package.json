@@ -44,6 +44,9 @@
     "rimraf": "^5.0.1",
     "typescript": "~5.0.4"
   },
+  "resolutions": {
+    "webpack": "5.99.9"
+  },
   "jupyterlab": {
     "extension": true,
     "outputDir": "saasy_jupyter_odoo/labextension"
